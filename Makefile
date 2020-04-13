@@ -2,9 +2,11 @@ OPTS?=GO111MODULE=on
 
 build: ## Build binaries
 	${OPTS} go build -o ./bin/crypto-watch ./cmd/exchange
+	${OPTS} go build -o ./apps/binance ./cmd/apps/binance
 
 clean: ## Clean compiled binaires
 	rm -rf bin
+	rm -rf apps
 
 format: ## Formats the code. Must have goimports installed (use make install-linters).
 	goimports -w -local github.com/Kifen/crypto-watch ./pkg

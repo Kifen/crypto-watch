@@ -46,6 +46,7 @@ func (s *Server) Recv(reqCh chan *pb.ExchangeReq, errCh chan error, stream pb.Cr
 	}
 
 	if err != nil {
+		s.Logger.WithError(err).Info("Pushed error into 'errCh'.")
 		errCh <- err
 		return
 	}
@@ -55,6 +56,7 @@ func (s *Server) Recv(reqCh chan *pb.ExchangeReq, errCh chan error, stream pb.Cr
 func (s *Server) Send(errCh chan error, stream pb.CryptoWatch_RequestPriceServer) {
 	res := <-s.ResCH
 	if err := stream.Send(res); err != nil {
+		s.Logger.WithError(err).Info("Pushed error into 'errCh'.")
 		errCh <- err
 		return
 	}

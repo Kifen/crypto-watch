@@ -1,0 +1,12 @@
+{
+  "apps_path": "./bin/apps",
+  "redis_addr": "redis://localhost:6379",
+  "redis_password": "",
+  "server_addr": ":2020",
+  "exchange_apps": [
+    {
+      "exchange": "binance",
+      "ws_url": "wss://stream.binance.com:9443/ws/skybtc@ticker"
+    }
+  ]
+}
