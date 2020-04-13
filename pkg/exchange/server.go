@@ -1,0 +1,76 @@
+package exchange
+
+import (
+	"io"
+	"net"
+
+	"github.com/SkycoinProject/skycoin/src/util/logging"
+	"google.golang.org/grpc"
+
+	pb "github.com/Kifen/crypto-watch/pkg/proto"
+	"github.com/Kifen/crypto-watch/pkg/util"
+)
+
+type Server struct {
+	SendErrCh chan error
+	RecvErrCh chan error
+	ReqCh     chan *pb.ExchangeReq
+	ResCH     chan *pb.ExchangeRes
+	Logger    *logging.Logger
+}
+
+const bufferSize = 10
+
+func NewServer() *Server {
+	return &Server{
+		SendErrCh: make(chan error, bufferSize),
+		RecvErrCh: make(chan error, bufferSize),
+		ReqCh:     make(chan *pb.ExchangeReq, bufferSize),
+		ResCH:     make(chan *pb.ExchangeRes, bufferSize),
+		Logger:    util.Logger("Server"),
+	}
+}
+
+func (s *Server) RequestPrice(stream pb.CryptoWatch_RequestPriceServer) error {
+	for {
+		go s.Recv(s.ReqCh, s.RecvErrCh, stream)
+		go s.Send(s.SendErrCh, stream)
+	}
+	return nil
+}
+
+func (s *Server) Recv(reqCh chan *pb.ExchangeReq, errCh chan error, stream pb.CryptoWatch_RequestPriceServer) {
+	req, err := stream.Recv()
+	if err == io.EOF {
+		errCh <- nil
+	}
+
+	if err != nil {
+		errCh <- err
+		return
+	}
+	reqCh <- req
+}
+
+func (s *Server) Send(errCh chan error, stream pb.CryptoWatch_RequestPriceServer) {
+	res := <-s.ResCH
+	if err := stream.Send(res); err != nil {
+		errCh <- err
+		return
+	}
+}
+
+func (s *Server) StartServer(addr string) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		s.Logger.Fatalf("failed to listen: %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterCryptoWatchServer(grpcServer, s)
+
+	s.Logger.Infof("Grpc server listening on %s", addr)
+	if err := grpcServer.Serve(lis); err != nil {
+		s.Logger.Fatalf("failed serving server: %v", err)
+	}
+}

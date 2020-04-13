@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package proto;
+
+service CryptoWatch {
+    rpc RequestPrice(stream ExchangeReq) returns (stream ExchangeRes);
+}
+
+message ExchangeReq {
+    string id = 1;
+    string Exchange = 2;
+}
+
+message ExchangeRes {
+    ExchangeReq req = 1;
+    float price = 2;
+}
