@@ -2,6 +2,7 @@ package exchange
 
 import (
 	"fmt"
+	pb "github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 	"github.com/SkycoinProject/skycoin/src/util/logging"
@@ -47,12 +48,19 @@ func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) 
 	}, nil
 }
 
-/*func (s *Server) notify() {
-	for {
-		select {
-		case req := <-s.ReqCh:
-
+func (e *Exchange) ManageServerConn() {
+	var fn = func(req *pb.ExchangeReq) {
+		if err := e.AppManager.StartApp(req.Exchange); err != nil && err != ErrAppAlreadyStarted {
+			if err == ErrAppNotFound {
+				e.Srv.ResCH <- &pb.ExchangeRes{
+					Req:     req,
+					Message: fmt.Sprint("Exchange %s is not supported", req.Exchange)}
+			}
+			e.Srv.ResCH <- &pb.ExchangeRes{
+				Req:     req,
+				Message: fmt.Sprint("Exchange service %s is currently down.", req.Exchange)}
 		}
 	}
+
+	go e.Srv.handleConn(fn)
 }
-*/

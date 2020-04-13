@@ -5,20 +5,26 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 )
 
 var (
-	//ErrNotFound is returned when an app is not found.
-	ErrNotFound = errors.New("app not found")
+	//ErrAppNotFound is returned when an app is not found.
+	ErrAppNotFound = errors.New("app not found")
+
+	//ErrAppNotFound is returned when an app is not found.
+	ErrAppAlreadyStarted = errors.New("app is already started")
 )
 
 type AppManager struct {
-	log      *logging.Logger
-	apps     map[string]AppConfig
-	appsPath string
+	log       *logging.Logger
+	apps      map[string]AppConfig
+	appsState map[string]struct{}
+	appsPath  string
+	appMu sync.Mutex
 }
 
 func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, error) {
@@ -41,6 +47,7 @@ func makeApps(exchangeApps []AppConfig) map[string]AppConfig {
 
 	return apps
 }
+
 /*func StartAppServer(r *AppManager, addr string) {
 	rpcS := rpc.NewServer()
 	rpcG := &AppManager{
@@ -62,21 +69,35 @@ func makeApps(exchangeApps []AppConfig) map[string]AppConfig {
 
 func (a *AppManager) StartApp(exchangeName string) error {
 	exchange := strings.ToLower(exchangeName)
+
 	if _, ok := a.apps[exchange]; ok {
-		return a.Start(a.appsPath, exchange)
+		if _, alive := a.appsState[exchange]; !alive {
+			err := a.start(a.appsPath, exchange)
+			if err != nil {
+				return err
+			}
+
+			a.appMu.Lock()
+			a.appsState[exchange] = struct{}{}
+			a.appMu.Unlock()
+
+			return nil
+		}
+
+		return ErrAppAlreadyStarted
 	}
 
-	return fmt.Errorf("app %s does not exist.", exchange)
+	return ErrAppNotFound
 }
 
-func (a *AppManager) Start(dir, name string) error {
+func (a *AppManager) start(dir, name string) error {
+	wsUrl := a.apps[name].WsUrl
 	binaryPath := util.GetBinaryPath(dir, name)
-	cmd := exec.Command(binaryPath)
+	cmd := exec.Command(binaryPath, wsUrl)
+
 	if err := cmd.Start(); err != nil {
 		return err
-	} else {
-		return nil
 	}
 
-	return ErrNotFound
+	return nil
 }

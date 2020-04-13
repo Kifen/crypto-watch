@@ -76,3 +76,13 @@ func (s *Server) StartServer(addr string) {
 		s.Logger.Fatalf("failed serving server: %v", err)
 	}
 }
+
+func (s *Server) handleConn(fn func(exchangeReq *pb.ExchangeReq))  {
+	s.Logger.Info("Serve handling conn...")
+	for {
+		select {
+		case req := <- s.ReqCh:
+			fn(req)
+		}
+	}
+}

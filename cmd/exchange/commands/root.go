@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
+
+	"github.com/SkycoinProject/skycoin/src/util/logging"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 
@@ -23,18 +27,22 @@ type runCfg struct {
 	args         []string
 	cfgFromStdin bool
 	conf         exchange.Config
+	logger       *logging.Logger
 }
 
 var cfg *runCfg
 
 var rootCmd = &cobra.Command{
-	Use:   "crypto-watch [config-path]",
+	Use:   "exchange [config-path]",
 	Short: "",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg.args = args
+		cfg.logger = util.Logger("")
 		readConfig()
 		exchange := initExchange(cfg.conf.RedisAddr, cfg.conf.RedisPassword, cfg.conf.AppsPath, cfg.conf.ExchangeApps)
-		exchange.Srv.StartServer(cfg.conf.ServerAddr)
+		go exchange.Srv.StartServer(cfg.conf.ServerAddr)
+		go exchange.ManageServerConn()
+		waitOsSignals()
 	},
 }
 
@@ -97,8 +105,21 @@ func readConfig() {
 
 func defaultConfigPath() (path string) {
 	if wd, err := os.Getwd(); err != nil {
-		path = filepath.Join(wd, "crypto-watch.json")
+		path = filepath.Join(wd, "exchange.json")
 	}
 
 	return
+}
+
+func waitOsSignals() {
+	ch := make(chan os.Signal, 2)
+	signal.Notify(ch, []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT}...)
+	<-ch
+
+	go func() {
+		select {
+		case s := <-ch:
+			cfg.logger.Fatalf("Received signal %s: terminating", s)
+		}
+	}()
 }
