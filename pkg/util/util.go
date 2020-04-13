@@ -1,10 +1,15 @@
 package util
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
+	"github.com/Kifen/crypto-watch/pkg/ws"
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 )
 
 func Logger(moduleName string) *logging.Logger {
@@ -62,4 +67,39 @@ func FindConfigPath(args []string, argsIndex int, env, defaultPath string) strin
 
 	log.Fatalf("config not found in defautl path %s", defaultPath)
 	return ""
+}
+
+// UnlinkSocketFiles removes unix socketFiles from file system
+func UnlinkSocketFiles(socketFiles ...string) error {
+	for _, f := range socketFiles {
+		if err := syscall.Unlink(f); err != nil {
+			if !strings.Contains(err.Error(), "no such file or directory") {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func Serialize(data ws.SubData) ([]byte, error) {
+	var buff bytes.Buffer
+	decoder := gob.NewEncoder(&buff)
+	err := decoder.Encode(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return buff.Bytes(), nil
+}
+
+func Deserialize(data []byte) (ws.SubData, error) {
+	var subData ws.SubData
+	decoder := gob.NewDecoder(bytes.NewReader(data))
+	err := decoder.Decode(&subData)
+	if err != nil {
+		return ws.SubData{}, err
+	}
+
+	return subData, nil
 }

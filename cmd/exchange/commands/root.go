@@ -100,7 +100,7 @@ func readConfig() {
 	if err := json.NewDecoder(rdr).Decode(&cfg.conf); err != nil {
 		log.Fatalf("Failed to decode %s: %s", rdr, err)
 	}
-	log.Info(cfg.conf)
+	log.Infof("Read config: %v", cfg.conf)
 }
 
 func defaultConfigPath() (path string) {

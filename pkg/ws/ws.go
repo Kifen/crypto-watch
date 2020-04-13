@@ -9,14 +9,14 @@ type ExchangeConfig struct {
 	WsUrl string
 }
 
+type SubData struct {
+	Symbol string
+	Id     int
+}
+
 type Exchange interface {
 	Connect() error
 	WsRead() ([]byte, error)
 	WsWrite(interface{}) error
-	Stream()
-	Run()
+	Stream(string)
 }
-
-const (
-	BinanceWsUrl = "wss://stream.binance.com:9443/ws/skybtc@ticker"
-)

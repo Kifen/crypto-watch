@@ -3,6 +3,8 @@ package exchange
 import (
 	"errors"
 	"fmt"
+	"github.com/Kifen/crypto-watch/pkg/ws"
+	"net"
 	"os/exec"
 	"strings"
 	"sync"
@@ -67,12 +69,12 @@ func makeApps(exchangeApps []AppConfig) map[string]AppConfig {
 	rpc.Accept(lis)
 }*/
 
-func (a *AppManager) StartApp(exchangeName string) error {
+func (a *AppManager) StartApp(exchangeName, symbol string, id int) error {
 	exchange := strings.ToLower(exchangeName)
 
 	if _, ok := a.apps[exchange]; ok {
 		if _, alive := a.appsState[exchange]; !alive {
-			err := a.start(a.appsPath, exchange)
+			err := a.start(a.appsPath, exchange, symbol)
 			if err != nil {
 				return err
 			}
@@ -82,6 +84,21 @@ func (a *AppManager) StartApp(exchangeName string) error {
 			a.appMu.Unlock()
 
 			return nil
+		} else {
+			sock := a.apps[exchangeName].SocketFile
+			subData := ws.SubData{
+				Symbol: symbol,
+				Id: id,
+			}
+
+			data, err := util.Serialize(subData)
+			if err != nil {
+				a.log.Fatalf("failed to serialize data: %s", err)
+			}
+
+			if err := a.sendData(data, sock); err != nil {
+				a.log.Errorf("Failed to send symbol %s to %s server.", symbol, exchange)
+			}
 		}
 
 		return ErrAppAlreadyStarted
@@ -90,10 +107,10 @@ func (a *AppManager) StartApp(exchangeName string) error {
 	return ErrAppNotFound
 }
 
-func (a *AppManager) start(dir, name string) error {
+func (a *AppManager) start(dir, name, symbol string) error {
 	wsUrl := a.apps[name].WsUrl
 	binaryPath := util.GetBinaryPath(dir, name)
-	cmd := exec.Command(binaryPath, wsUrl)
+	cmd := exec.Command(binaryPath, wsUrl, symbol)
 
 	if err := cmd.Start(); err != nil {
 		return err
@@ -101,3 +118,26 @@ func (a *AppManager) start(dir, name string) error {
 
 	return nil
 }
+
+func (a *AppManager) sendData(data []byte, socketFile string) error {
+	conn, err := net.Dial("unix", socketFile)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			a.log.Errorf("error closing client: %v", err)
+		}
+	}()
+
+	n, err := conn.Write(data)
+	if err != nil {
+		return err
+	}
+
+	a.log.Infof("Wrote %d bytes", n)
+	return nil
+}
+

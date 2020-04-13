@@ -11,6 +11,7 @@ import (
 type AppConfig struct {
 	Exchange string `json:"exchange"`
 	WsUrl    string `json:"ws_url"`
+	SocketFile string `json:"socket_file"`
 }
 
 type Config struct {
@@ -50,7 +51,7 @@ func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) 
 
 func (e *Exchange) ManageServerConn() {
 	var fn = func(req *pb.ExchangeReq) {
-		if err := e.AppManager.StartApp(req.Exchange); err != nil && err != ErrAppAlreadyStarted {
+		if err := e.AppManager.StartApp(req.Exchange, req.Req.Symbol, int(req.Id)); err != nil && err != ErrAppAlreadyStarted {
 			if err == ErrAppNotFound {
 				e.Srv.ResCH <- &pb.ExchangeRes{
 					Req:     req,

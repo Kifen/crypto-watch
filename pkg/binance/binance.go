@@ -2,9 +2,14 @@ package binance
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 
@@ -17,22 +22,25 @@ import (
 )
 
 type Binance struct {
-	WsUrl   string
-	Dialer  *websocket.Dialer
-	Header  http.Header
-	WsConn  *websocket.Conn
-	ErrCh   chan error
-	AliveCh chan struct{}
-	DeadCh  chan struct{}
-	logger  *logging.Logger
+	WsUrl    string
+	sockFile string
+	Dialer   *websocket.Dialer
+	Header   http.Header
+	WsConn   *websocket.Conn
+	ErrCh    chan error
+	AliveCh  chan struct{}
+	DeadCh   chan struct{}
+	logger   *logging.Logger
+	mu       sync.Mutex
 }
 
-func NewBinance(url string) ws.Exchange {
+func NewBinance(url, sockFile string) ws.Exchange {
 	return &Binance{
-		WsUrl:  url,
-		ErrCh:  make(chan error),
-		DeadCh: make(chan struct{}),
-		logger: util.Logger("Binance"),
+		sockFile: sockFile,
+		WsUrl:    url,
+		ErrCh:    make(chan error),
+		DeadCh:   make(chan struct{}),
+		logger:   util.Logger("Binance"),
 	}
 }
 
@@ -64,7 +72,8 @@ func (b *Binance) WsWrite(data interface{}) error {
 	return b.WsConn.WriteMessage(websocket.TextMessage, msg)
 }
 
-func (b *Binance) Stream() {
+func (b *Binance) Stream(symbol string) {
+	symbol = strings.ToUpper(symbol)
 	for {
 		msgByte, err := b.WsRead()
 		if err != nil {
@@ -82,13 +91,69 @@ func (b *Binance) Stream() {
 	}
 }
 
-func (b *Binance) Run() {
-	err := b.Connect()
+func (b *Binance) Serve() error {
+	listener, err := net.Listen("unix", b.sockFile)
 	if err != nil {
-		b.ErrCh <- err
-		return
+		return err
 	}
 
-	b.logger.Info("Binance Initialized...")
-	go b.Stream()
+	defer func() {
+		err := listener.Close()
+		if err != nil {
+			b.logger.WithError(err)
+		}
+	}()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return err
+		}
+
+		go b.handleConn(conn)
+	}
+}
+
+func (b *Binance) handleConn(conn net.Conn) {
+	for {
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err != io.EOF {
+			b.logger.Warnf("error on read: %s", err)
+			break
+		}
+
+		subData, err := util.Deserialize(buf[:n])
+		if err != nil {
+			b.logger.Fatalf("Failed to deserialize data: %s", err)
+		}
+
+		b.Subscribe(subData)
+	}
+}
+
+func (b *Binance) Subscribe(data ws.SubData) error {
+	type subReq struct {
+		method string   `json:"method"`
+		params []string `json:"params"`
+		id     int      `json:"id"`
+	}
+
+	s := fmt.Sprintf("%s@ticker", strings.ToLower(data.Symbol))
+	req := &subReq{
+		method: "SUBSCRIBE",
+		params: []string{s},
+		id:     data.Id,
+	}
+	msg, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("failed to marshal subscribe data: %s", err)
+	}
+
+	err = b.WsWrite(msg)
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to stream: %s", err)
+	}
+
+	return nil
 }

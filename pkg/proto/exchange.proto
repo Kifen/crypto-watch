@@ -7,7 +7,7 @@ service CryptoWatch {
 }
 
 message ExchangeReq {
-    string id = 1;
+    int32 id = 1;
     string Exchange = 2;
     Req req = 3;
 }
