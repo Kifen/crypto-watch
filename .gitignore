@@ -10,6 +10,6 @@
 
 .idea/
 bin/
-apps/
+/apps/
 
 /*.json
