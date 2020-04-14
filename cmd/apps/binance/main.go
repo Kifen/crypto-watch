@@ -8,21 +8,16 @@ import (
 )
 
 func main() {
-	//url := "wss://stream.binance.com:9443/ws/skybtc@ticker"
 	flag.Parse()
-	if len(flag.Args()) <3 {
-		log.Fatalf("Invalid number of arguments - found %d, requires [wsUrl] [symbol] [sockfile]", len(flag.Args()))
+	if len(flag.Args()) < 2 {
+		log.Fatalf("Invalid number of arguments - found %d, requires [wsUrl] [sockfile]", len(flag.Args()))
 	}
 
 	wsUrl := flag.Args()[0]
-	symbol := flag.Args()[1]
-	sockFile := flag.Args()[2]
+	sockFile := flag.Args()[1]
 	binance := binance.NewBinance(wsUrl, sockFile)
-	err := binance.Connect()
+	err := binance.Serve()
 	if err != nil {
 		log.Fatalf("Error connecting appmanager client: %s", err)
 	}
-
-	log.Println("Connected to binance stream ws...")
-	binance.Stream(symbol)
 }

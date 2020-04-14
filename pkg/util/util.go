@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-	"github.com/Kifen/crypto-watch/pkg/ws"
-	"github.com/SkycoinProject/skycoin/src/util/logging"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/SkycoinProject/skycoin/src/util/logging"
+
+	"github.com/Kifen/crypto-watch/pkg/ws"
 )
 
 func Logger(moduleName string) *logging.Logger {
@@ -82,7 +84,7 @@ func UnlinkSocketFiles(socketFiles ...string) error {
 	return nil
 }
 
-func Serialize(data ws.SubData) ([]byte, error) {
+func Serialize(data interface{}) ([]byte, error) {
 	var buff bytes.Buffer
 	decoder := gob.NewEncoder(&buff)
 	err := decoder.Encode(data)
@@ -93,12 +95,12 @@ func Serialize(data ws.SubData) ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
-func Deserialize(data []byte) (ws.SubData, error) {
-	var subData ws.SubData
+func Deserialize(data []byte) (ws.ReqData, error) {
+	var subData ws.ReqData
 	decoder := gob.NewDecoder(bytes.NewReader(data))
 	err := decoder.Decode(&subData)
 	if err != nil {
-		return ws.SubData{}, err
+		return ws.ReqData{}, err
 	}
 
 	return subData, nil

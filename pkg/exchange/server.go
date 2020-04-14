@@ -37,9 +37,9 @@ func (s *Server) RequestPrice(stream pb.CryptoWatch_RequestPriceServer) error {
 		go s.Send(s.SendErrCh, stream)
 
 		select {
-		case recvErr := <- s.RecvErrCh:
+		case recvErr := <-s.RecvErrCh:
 			return recvErr
-		case sendErr := <- s.SendErrCh:
+		case sendErr := <-s.SendErrCh:
 			return sendErr
 		}
 	}
@@ -85,11 +85,11 @@ func (s *Server) StartServer(addr string) {
 	}
 }
 
-func (s *Server) handleConn(fn func(exchangeReq *pb.ExchangeReq))  {
+func (s *Server) handleConn(fn func(exchangeReq *pb.ExchangeReq)) {
 	s.Logger.Info("Server handling conn.")
 	for {
 		select {
-		case req := <- s.ReqCh:
+		case req := <-s.ReqCh:
 			fn(req)
 		}
 	}

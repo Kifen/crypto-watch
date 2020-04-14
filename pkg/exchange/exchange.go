@@ -2,15 +2,19 @@ package exchange
 
 import (
 	"fmt"
+
+	"github.com/Kifen/crypto-watch/pkg/ws"
+
 	pb "github.com/Kifen/crypto-watch/pkg/proto"
 
-	"github.com/Kifen/crypto-watch/pkg/util"
 	"github.com/SkycoinProject/skycoin/src/util/logging"
+
+	"github.com/Kifen/crypto-watch/pkg/util"
 )
 
 type AppConfig struct {
-	Exchange string `json:"exchange"`
-	WsUrl    string `json:"ws_url"`
+	Exchange   string `json:"exchange"`
+	WsUrl      string `json:"ws_url"`
 	SocketFile string `json:"socket_file"`
 }
 
@@ -51,15 +55,28 @@ func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) 
 
 func (e *Exchange) ManageServerConn() {
 	var fn = func(req *pb.ExchangeReq) {
-		if err := e.AppManager.StartApp(req.Exchange, req.Req.Symbol, int(req.Id)); err != nil && err != ErrAppAlreadyStarted {
-			if err == ErrAppNotFound {
-				e.Srv.ResCH <- &pb.ExchangeRes{
-					Req:     req,
-					Message: fmt.Sprint("Exchange %s is not supported", req.Exchange)}
-			}
+		err := e.AppManager.appExists(req.Exchange)
+		if err == ErrAppNotFound {
 			e.Srv.ResCH <- &pb.ExchangeRes{
 				Req:     req,
-				Message: fmt.Sprint("Exchange service %s is currently down.", req.Exchange)}
+				Message: fmt.Sprint("Exchange %s is not supported", req.Exchange)}
+			return
+		}
+
+		if alive := e.AppManager.appIsAlive(req.Exchange); !alive {
+			if err := e.AppManager.StartApp(req.Exchange); err != nil {
+				e.Logger.Warnf("Failed to start %s app: %s", req.Exchange, err)
+				return
+			}
+		}
+
+		data := ws.ReqData{
+			Symbol: req.Req.Symbol,
+			Id:     int(req.Id),
+		}
+		if err := e.AppManager.SendData(req.Exchange, data); err != nil {
+			e.Logger.Errorf("Failed to send data to %s server: %s", req.Exchange, err)
+			return
 		}
 	}
 

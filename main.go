@@ -1,4 +1,4 @@
-package binance
+package main
 
 import (
 	"encoding/json"
@@ -6,19 +6,22 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"strings"
 	"sync"
 
-	"github.com/SkycoinProject/skycoin/src/util/logging"
-
 	"github.com/Kifen/crypto-watch/pkg/ws"
+	"github.com/SkycoinProject/skycoin/src/util/logging"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 
 	"github.com/bitly/go-simplejson"
 	"github.com/gorilla/websocket"
 )
+
+func main() {
+	binance := NewBinance("/tmp/binance.sock", "wss://stream.binance.com:9443/ws/skybtc@ticker")
+	binance.WsServe(binance.wsUrl, nil)
+}
 
 type Binance struct {
 	sockFile string
@@ -45,21 +48,19 @@ func (b *Binance) WsServe(wsUrl string, priceCh chan float64) error {
 	}
 
 	b.logger.Info("Connection established to binance ws...")
-
 	for {
 		msgByte, err := b.WsRead(conn)
 		if err != nil {
 			return err
 		}
 
-		log.Println("Logging data:\n", string(msgByte))
+		b.logger.Println("Logging data:\n", string(msgByte))
 		j, err := simplejson.NewJson(msgByte)
 		if err != nil {
 			return err
 		}
 
-		log.Println("#PRICE SKYBTC: ", j.Get("c"))
-		os.Exit(1)
+		log.Println("#PRICE SKYBTC: ", j.Get("c").MustFloat64())
 	}
 }
 
@@ -87,8 +88,6 @@ func (b *Binance) Serve() error {
 		return err
 	}
 
-	b.logger.Infof("Binance server listening on unix socket: %s", b.sockFile)
-
 	defer func() {
 		err := listener.Close()
 		if err != nil {
@@ -104,8 +103,6 @@ func (b *Binance) Serve() error {
 
 		go b.handleServerConn(conn)
 	}
-
-	return nil
 }
 
 func (b *Binance) handleServerConn(conn net.Conn) {
@@ -129,6 +126,7 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 func (b *Binance) serve(data ws.ReqData, conn net.Conn) {
 	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(data.Symbol))
 	go func() {
+		b.logger.Info("Waiting to serve...")
 		priceCh := make(chan float64)
 		b.WsServe(endPoint, priceCh)
 		price := <-priceCh

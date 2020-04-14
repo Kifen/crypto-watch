@@ -3,14 +3,16 @@ package exchange
 import (
 	"errors"
 	"fmt"
-	"github.com/Kifen/crypto-watch/pkg/ws"
 	"net"
 	"os/exec"
 	"strings"
 	"sync"
 
-	"github.com/Kifen/crypto-watch/pkg/util"
+	"github.com/Kifen/crypto-watch/pkg/ws"
+
 	"github.com/SkycoinProject/skycoin/src/util/logging"
+
+	"github.com/Kifen/crypto-watch/pkg/util"
 )
 
 var (
@@ -26,7 +28,7 @@ type AppManager struct {
 	apps      map[string]AppConfig
 	appsState map[string]struct{}
 	appsPath  string
-	appMu sync.Mutex
+	appMu     sync.Mutex
 }
 
 func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, error) {
@@ -69,51 +71,60 @@ func makeApps(exchangeApps []AppConfig) map[string]AppConfig {
 	rpc.Accept(lis)
 }*/
 
-func (a *AppManager) StartApp(exchangeName, symbol string, id int) error {
-	exchange := strings.ToLower(exchangeName)
-
-	if _, ok := a.apps[exchange]; ok {
-		if _, alive := a.appsState[exchange]; !alive {
-			err := a.start(a.appsPath, exchange, symbol)
-			if err != nil {
-				return err
-			}
-
-			a.appMu.Lock()
-			a.appsState[exchange] = struct{}{}
-			a.appMu.Unlock()
-
-			return nil
-		} else {
-			sock := a.apps[exchangeName].SocketFile
-			subData := ws.SubData{
-				Symbol: symbol,
-				Id: id,
-			}
-
-			data, err := util.Serialize(subData)
-			if err != nil {
-				a.log.Fatalf("failed to serialize data: %s", err)
-			}
-
-			if err := a.sendData(data, sock); err != nil {
-				a.log.Errorf("Failed to send symbol %s to %s server.", symbol, exchange)
-			}
-		}
-
-		return ErrAppAlreadyStarted
+func (a *AppManager) appExists(exchange string) error {
+	if _, ok := a.apps[exchange]; !ok {
+		return ErrAppNotFound
 	}
 
-	return ErrAppNotFound
+	return nil
 }
 
-func (a *AppManager) start(dir, name, symbol string) error {
+func (a *AppManager) appIsAlive(exchange string) bool {
+	if _, alive := a.appsState[exchange]; alive {
+		return alive
+	}
+
+	return false
+}
+
+func (a *AppManager) StartApp(exchangeName string) error {
+	exchange := strings.ToLower(exchangeName)
+	sockFile := a.apps[exchangeName].SocketFile
+
+	err := a.start(a.appsPath, exchange, sockFile)
+	if err != nil {
+		return err
+	}
+
+	a.appMu.Lock()
+	a.appsState[exchange] = struct{}{}
+	a.appMu.Unlock()
+
+	return nil
+}
+
+func (a *AppManager) SendData(exchange string, subData ws.ReqData) error {
+	data, err := util.Serialize(subData)
+	if err != nil {
+		a.log.Fatalf("failed to serialize data: %s", err)
+		return err
+	}
+
+	if err := a.sendData(data, a.apps[exchange].SocketFile); err != nil {
+		a.log.Errorf("Failed to send symbol %s to %s server.", subData.Symbol, exchange)
+		return err
+	}
+
+	return nil
+}
+
+func (a *AppManager) start(dir, name, sockFile string) error {
 	wsUrl := a.apps[name].WsUrl
 	binaryPath := util.GetBinaryPath(dir, name)
-	cmd := exec.Command(binaryPath, wsUrl, symbol)
+	cmd := exec.Command(binaryPath, wsUrl, sockFile)
 
 	if err := cmd.Start(); err != nil {
-		return err
+		return fmt.Errorf("failed to start binance app: %s", err)
 	}
 
 	return nil
@@ -140,4 +151,3 @@ func (a *AppManager) sendData(data []byte, socketFile string) error {
 	a.log.Infof("Wrote %d bytes", n)
 	return nil
 }
-
