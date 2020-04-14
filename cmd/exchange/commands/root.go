@@ -48,11 +48,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	cfg = &runCfg{}
-	//rootCmd.Flags().StringVarP(&cfg.redisAddr, "redis-url", "", "redis://localhost:6379", "redis address")
-	//rootCmd.Flags().StringVarP(&cfg.redisPassword, "password", "p", "none", "redis password")
-	//rootCmd.Flags().StringVarP(&cfg.serverAddr, "server-addr", "", ":2000", "grpc server address")
 	rootCmd.Flags().BoolVarP(&cfg.cfgFromStdin, "stdin", "i", false, "read config from STDIN")
-	//rootCmd.Flags().StringVarP(&cfg.appsPath, "apppath", "", "./bin/apps", "path to exchange apps binaries")
 }
 
 func initExchange(url, password, appsPath string, exchangeApps []exchange.AppConfig) *exchange.Exchange {

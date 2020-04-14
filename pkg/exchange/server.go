@@ -11,6 +11,17 @@ import (
 	"github.com/Kifen/crypto-watch/pkg/util"
 )
 
+type ReqData struct {
+	Symbol string
+	Id     int
+}
+
+type ResData struct {
+	Symbol string
+	Id     int
+	Price  float64
+}
+
 type Server struct {
 	SendErrCh chan error
 	RecvErrCh chan error

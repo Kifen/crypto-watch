@@ -3,6 +3,7 @@ package binance
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Kifen/crypto-watch/pkg/exchange"
 	"io"
 	"log"
 	"net"
@@ -11,8 +12,6 @@ import (
 	"sync"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
-
-	"github.com/Kifen/crypto-watch/pkg/ws"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 
@@ -126,14 +125,14 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 	}
 }
 
-func (b *Binance) serve(data ws.ReqData, conn net.Conn) {
+func (b *Binance) serve(data exchange.ReqData, conn net.Conn) {
 	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(data.Symbol))
 	go func() {
 		priceCh := make(chan float64)
 		b.WsServe(endPoint, priceCh)
 		price := <-priceCh
 
-		b, err := util.Serialize(ws.ResData{
+		b, err := util.Serialize(exchange.ResData{
 			Symbol: data.Symbol,
 			Id:     data.Id,
 			Price:  price,

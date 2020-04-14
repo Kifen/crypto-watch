@@ -3,8 +3,6 @@ package exchange
 import (
 	"fmt"
 
-	"github.com/Kifen/crypto-watch/pkg/ws"
-
 	pb "github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
@@ -70,7 +68,7 @@ func (e *Exchange) ManageServerConn() {
 			}
 		}
 
-		data := ws.ReqData{
+		data := ReqData{
 			Symbol: req.Req.Symbol,
 			Id:     int(req.Id),
 		}

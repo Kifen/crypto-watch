@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Kifen/crypto-watch/pkg/ws"
-
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
@@ -103,7 +101,7 @@ func (a *AppManager) StartApp(exchangeName string) error {
 	return nil
 }
 
-func (a *AppManager) SendData(exchange string, subData ws.ReqData) error {
+func (a *AppManager) SendData(exchange string, subData ReqData) error {
 	data, err := util.Serialize(subData)
 	if err != nil {
 		a.log.Fatalf("failed to serialize data: %s", err)
