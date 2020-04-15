@@ -25,10 +25,10 @@ type Config struct {
 }
 
 type Exchange struct {
-	Store      *RedisStore
-	Logger     *logging.Logger
-	Srv        *Server
-	AppManager *AppManager
+	Store              *RedisStore
+	Logger             *logging.Logger
+	Srv                *Server
+	AppManager         *AppManager
 }
 
 func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) (*Exchange, error) {
@@ -43,27 +43,32 @@ func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) 
 		return nil, fmt.Errorf("failed to setup app manager: %s", err)
 	}
 
+	var supportedExchanges = func(exchangeName string) bool {
+		_, ok := appManager.apps[exchangeName]
+		return ok
+	}
+
 	return &Exchange{
 		Store:      s,
 		Logger:     util.Logger("Exchange"),
-		Srv:        NewServer(),
+		Srv:        NewServer(supportedExchanges),
 		AppManager: appManager,
 	}, nil
 }
 
 func (e *Exchange) ManageServerConn() {
-	var fn = func(req *pb.ExchangeReq) {
-		err := e.AppManager.appExists(req.Exchange)
+	var fn = func(req *pb.AlertReq) {
+		err := e.AppManager.appExists(req.ExchangeName)
 		if err == ErrAppNotFound {
-			e.Srv.ResCH <- &pb.ExchangeRes{
+			e.Srv.ResCH <- &pb.AlertRes{
 				Req:     req,
-				Message: fmt.Sprint("Exchange %s is not supported", req.Exchange)}
+				Message: fmt.Sprint("Exchange %s is not supported", req.ExchangeName)}
 			return
 		}
 
-		if alive := e.AppManager.appIsAlive(req.Exchange); !alive {
-			if err := e.AppManager.StartApp(req.Exchange); err != nil {
-				e.Logger.Warnf("Failed to start %s app: %s", req.Exchange, err)
+		if alive := e.AppManager.appIsAlive(req.ExchangeName); !alive {
+			if err := e.AppManager.StartApp(req.ExchangeName); err != nil {
+				e.Logger.Warnf("Failed to start %s app: %s", req.ExchangeName, err)
 				return
 			}
 		}
@@ -72,8 +77,8 @@ func (e *Exchange) ManageServerConn() {
 			Symbol: req.Req.Symbol,
 			Id:     int(req.Id),
 		}
-		if err := e.AppManager.SendData(req.Exchange, data); err != nil {
-			e.Logger.Errorf("Failed to send data to %s server: %s", req.Exchange, err)
+		if err := e.AppManager.SendData(req.ExchangeName, data); err != nil {
+			e.Logger.Errorf("Failed to send data to %s server: %s", req.ExchangeName, err)
 			return
 		}
 	}

@@ -1,6 +1,9 @@
 package exchange
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 
@@ -12,21 +15,23 @@ import (
 )
 
 type Server struct {
+	fn        func(string) bool
 	SendErrCh chan error
 	RecvErrCh chan error
-	ReqCh     chan *pb.ExchangeReq
-	ResCH     chan *pb.ExchangeRes
+	ReqCh     chan *pb.AlertReq
+	ResCH     chan *pb.AlertRes
 	Logger    *logging.Logger
 }
 
 const bufferSize = 10
 
-func NewServer() *Server {
+func NewServer(callback func(string) bool) *Server {
 	return &Server{
+		fn:        callback,
 		SendErrCh: make(chan error, bufferSize),
 		RecvErrCh: make(chan error, bufferSize),
-		ReqCh:     make(chan *pb.ExchangeReq, bufferSize),
-		ResCH:     make(chan *pb.ExchangeRes, bufferSize),
+		ReqCh:     make(chan *pb.AlertReq, bufferSize),
+		ResCH:     make(chan *pb.AlertRes, bufferSize),
 		Logger:    util.Logger("Server"),
 	}
 }
@@ -47,7 +52,18 @@ func (s *Server) RequestPrice(stream pb.CryptoWatch_RequestPriceServer) error {
 	return nil
 }
 
-func (s *Server) Recv(reqCh chan *pb.ExchangeReq, errCh chan error, stream pb.CryptoWatch_RequestPriceServer) {
+func (s *Server) IsExchangeSupported(ctx context.Context, exchange *pb.Exchange) (*pb.Exchange, error) {
+	if isSUpported := s.fn(exchange.Name); isSUpported {
+		return &pb.Exchange{
+			Name:      exchange.Name,
+			Supported: isSUpported,
+		}, nil
+	}
+
+	return nil, errors.New(fmt.Sprintf("Exchange %s is not supported", exchange.Name))
+}
+
+func (s *Server) Recv(reqCh chan *pb.AlertReq, errCh chan error, stream pb.CryptoWatch_RequestPriceServer) {
 	req, err := stream.Recv()
 	if err == io.EOF {
 		errCh <- nil
@@ -85,7 +101,7 @@ func (s *Server) StartServer(addr string) {
 	}
 }
 
-func (s *Server) handleConn(fn func(exchangeReq *pb.ExchangeReq)) {
+func (s *Server) handleConn(fn func(alertReq *pb.AlertReq)) {
 	s.Logger.Info("Server handling conn.")
 	for {
 		select {

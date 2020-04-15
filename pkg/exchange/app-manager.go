@@ -78,11 +78,8 @@ func (a *AppManager) appExists(exchange string) error {
 }
 
 func (a *AppManager) appIsAlive(exchange string) bool {
-	if _, alive := a.appsState[exchange]; alive {
-		return alive
-	}
-
-	return false
+	_, alive := a.appsState[exchange]
+	return alive
 }
 
 func (a *AppManager) StartApp(exchangeName string) error {
