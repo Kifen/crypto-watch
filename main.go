@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Kifen/crypto-watch/pkg/ws"
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 
 	"github.com/Kifen/crypto-watch/pkg/util"

@@ -101,7 +101,7 @@ func (a *AppManager) StartApp(exchangeName string) error {
 	return nil
 }
 
-func (a *AppManager) SendData(exchange string, subData ReqData) error {
+func (a *AppManager) SendData(exchange string, subData util.ReqData) error {
 	data, err := util.Serialize(subData)
 	if err != nil {
 		a.log.Fatalf("failed to serialize data: %s", err)

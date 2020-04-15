@@ -3,7 +3,6 @@ package binance
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/Kifen/crypto-watch/pkg/exchange"
 	"io"
 	"log"
 	"net"
@@ -125,14 +124,14 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 	}
 }
 
-func (b *Binance) serve(data exchange.ReqData, conn net.Conn) {
+func (b *Binance) serve(data util.ReqData, conn net.Conn) {
 	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(data.Symbol))
 	go func() {
 		priceCh := make(chan float64)
 		b.WsServe(endPoint, priceCh)
 		price := <-priceCh
 
-		b, err := util.Serialize(exchange.ResData{
+		b, err := util.Serialize(util.ResData{
 			Symbol: data.Symbol,
 			Id:     data.Id,
 			Price:  price,

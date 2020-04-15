@@ -10,9 +10,18 @@ import (
 	"syscall"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
-
-	"github.com/Kifen/crypto-watch/pkg/ws"
 )
+
+type ReqData struct {
+	Symbol string
+	Id     int
+}
+
+type ResData struct {
+	Symbol string
+	Id     int
+	Price  float64
+}
 
 func Logger(moduleName string) *logging.Logger {
 	masterLogger := logging.NewMasterLogger()
@@ -95,12 +104,12 @@ func Serialize(data interface{}) ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
-func Deserialize(data []byte) (ws.ReqData, error) {
-	var subData ws.ReqData
+func Deserialize(data []byte) (ReqData, error) {
+	var subData ReqData
 	decoder := gob.NewDecoder(bytes.NewReader(data))
 	err := decoder.Decode(&subData)
 	if err != nil {
-		return ws.ReqData{}, err
+		return ReqData{}, err
 	}
 
 	return subData, nil

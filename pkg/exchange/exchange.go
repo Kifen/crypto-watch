@@ -68,7 +68,7 @@ func (e *Exchange) ManageServerConn() {
 			}
 		}
 
-		data := ReqData{
+		data := util.ReqData{
 			Symbol: req.Req.Symbol,
 			Id:     int(req.Id),
 		}
