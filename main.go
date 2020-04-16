@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Kifen/crypto-watch/pkg/proto"
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 
@@ -59,7 +61,8 @@ func (b *Binance) WsServe(wsUrl string, priceCh chan float64) error {
 			return err
 		}
 
-		log.Println("#PRICE SKYBTC: ", j.Get("c").MustFloat64())
+		log.Println("#PRICE SKYBTC: ", j.Get("c").Interface())
+		os.Exit(0)
 	}
 }
 
@@ -118,22 +121,22 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 			b.logger.Fatalf("Failed to deserialize request data: %s", err)
 		}
 
-		b.serve(reqData, conn)
+		req := reqData.(proto.AlertReq)
+		b.serve(&req, conn)
 	}
 }
 
-func (b *Binance) serve(data ws.ReqData, conn net.Conn) {
-	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(data.Symbol))
+func (b *Binance) serve(data *proto.AlertReq, conn net.Conn) {
+	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(data.Req.Symbol))
 	go func() {
 		b.logger.Info("Waiting to serve...")
 		priceCh := make(chan float64)
 		b.WsServe(endPoint, priceCh)
 		price := <-priceCh
 
-		b, err := util.Serialize(ws.ResData{
-			Symbol: data.Symbol,
-			Id:     data.Id,
-			Price:  price,
+		b, err := util.Serialize(proto.AlertRes{
+			Req:   data,
+			Price: float32(price),
 		})
 
 		if err != nil {

@@ -2,7 +2,6 @@ package exchange
 
 import (
 	"fmt"
-
 	pb "github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
@@ -13,6 +12,7 @@ import (
 type AppConfig struct {
 	Exchange   string `json:"exchange"`
 	WsUrl      string `json:"ws_url"`
+	BaseUrl    string `json:"base_url"`
 	SocketFile string `json:"socket_file"`
 }
 
@@ -25,10 +25,10 @@ type Config struct {
 }
 
 type Exchange struct {
-	Store              *RedisStore
-	Logger             *logging.Logger
-	Srv                *Server
-	AppManager         *AppManager
+	Store      *RedisStore
+	Logger     *logging.Logger
+	Srv        *Server
+	AppManager *AppManager
 }
 
 func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) (*Exchange, error) {
@@ -57,31 +57,37 @@ func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) 
 }
 
 func (e *Exchange) ManageServerConn() {
-	var fn = func(req *pb.AlertReq) {
-		err := e.AppManager.appExists(req.ExchangeName)
-		if err == ErrAppNotFound {
-			e.Srv.ResCH <- &pb.AlertRes{
-				Req:     req,
-				Message: fmt.Sprint("Exchange %s is not supported", req.ExchangeName)}
-			return
-		}
-
-		if alive := e.AppManager.appIsAlive(req.ExchangeName); !alive {
-			if err := e.AppManager.StartApp(req.ExchangeName); err != nil {
-				e.Logger.Warnf("Failed to start %s app: %s", req.ExchangeName, err)
-				return
+	for {
+		select {
+		case req := <-e.Srv.alertReqCh:
+			e.handlePriceRequest(req)
+		case req := <-e.Srv.symbolReqCH:
+			e.handleSymbolRequest(req)
+		case res := <-e.AppManager.msgCh:
+			switch v := res.(type) {
+			case pb.Symbol:
+				e.Srv.symbolResCH <- &v
+			case pb.AlertRes:
+				e.Srv.alertResCh <- &v
 			}
 		}
+	}
+}
 
-		data := util.ReqData{
-			Symbol: req.Req.Symbol,
-			Id:     int(req.Id),
-		}
-		if err := e.AppManager.SendData(req.ExchangeName, data); err != nil {
-			e.Logger.Errorf("Failed to send data to %s server: %s", req.ExchangeName, err)
-			return
+func (e *Exchange) handlePriceRequest(req *pb.AlertReq) {
+	if err := e.AppManager.SendData(req.ExchangeName, req); err != nil {
+		e.Logger.Errorf("Failed to send data to %s server: %s", req.ExchangeName, err)
+		e.Srv.alertResCh <- &pb.AlertRes{
+			Req:     req,
+			Price:   0.00,
+			Message: err.Error(),
 		}
 	}
+}
 
-	go e.Srv.handleConn(fn)
+func (e *Exchange) handleSymbolRequest(req *pb.Symbol) {
+	if err := e.AppManager.SendData(req.ExchangeName, req); err != nil {
+		e.Logger.Errorf("Failed to send data to %s server: %s", req.ExchangeName, err)
+
+	}
 }

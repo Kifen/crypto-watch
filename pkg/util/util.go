@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"github.com/Kifen/crypto-watch/pkg/proto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,17 +12,6 @@ import (
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 )
-
-type ReqData struct {
-	Symbol string
-	Id     int
-}
-
-type ResData struct {
-	Symbol string
-	Id     int
-	Price  float64
-}
 
 func Logger(moduleName string) *logging.Logger {
 	masterLogger := logging.NewMasterLogger()
@@ -104,13 +94,13 @@ func Serialize(data interface{}) ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
-func Deserialize(data []byte) (ReqData, error) {
-	var subData ReqData
+func Deserialize(data []byte) (interface{}, error) {
+	var i interface{}
 	decoder := gob.NewDecoder(bytes.NewReader(data))
-	err := decoder.Decode(&subData)
+	err := decoder.Decode(&i)
 	if err != nil {
-		return ReqData{}, err
+		return proto.AlertReq{}, err
 	}
 
-	return subData, nil
+	return i, nil
 }

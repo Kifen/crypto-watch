@@ -15,30 +15,32 @@ import (
 )
 
 type Server struct {
-	fn        func(string) bool
-	SendErrCh chan error
-	RecvErrCh chan error
-	ReqCh     chan *pb.AlertReq
-	ResCH     chan *pb.AlertRes
-	Logger    *logging.Logger
+	fn          func(string) bool
+	SendErrCh   chan error
+	RecvErrCh   chan error
+	alertReqCh  chan *pb.AlertReq
+	alertResCh  chan *pb.AlertRes
+	symbolReqCH chan *pb.Symbol
+	symbolResCH chan *pb.Symbol
+	logger      *logging.Logger
 }
 
 const bufferSize = 10
 
 func NewServer(callback func(string) bool) *Server {
 	return &Server{
-		fn:        callback,
-		SendErrCh: make(chan error, bufferSize),
-		RecvErrCh: make(chan error, bufferSize),
-		ReqCh:     make(chan *pb.AlertReq, bufferSize),
-		ResCH:     make(chan *pb.AlertRes, bufferSize),
-		Logger:    util.Logger("Server"),
+		fn:         callback,
+		SendErrCh:  make(chan error, bufferSize),
+		RecvErrCh:  make(chan error, bufferSize),
+		alertReqCh: make(chan *pb.AlertReq, bufferSize),
+		alertResCh: make(chan *pb.AlertRes, bufferSize),
+		logger:     util.Logger("Server"),
 	}
 }
 
 func (s *Server) RequestPrice(stream pb.CryptoWatch_RequestPriceServer) error {
 	for {
-		go s.Recv(s.ReqCh, s.RecvErrCh, stream)
+		go s.Recv(s.alertReqCh, s.RecvErrCh, stream)
 		go s.Send(s.SendErrCh, stream)
 
 		select {
@@ -53,14 +55,27 @@ func (s *Server) RequestPrice(stream pb.CryptoWatch_RequestPriceServer) error {
 }
 
 func (s *Server) IsExchangeSupported(ctx context.Context, exchange *pb.Exchange) (*pb.Exchange, error) {
-	if isSUpported := s.fn(exchange.Name); isSUpported {
+	s.logger.Info("Sending response for supported exchange.")
+	if isSupported := s.fn(exchange.Name); isSupported {
 		return &pb.Exchange{
 			Name:      exchange.Name,
-			Supported: isSUpported,
+			Supported: isSupported,
 		}, nil
 	}
 
 	return nil, errors.New(fmt.Sprintf("Exchange %s is not supported", exchange.Name))
+}
+
+func (s *Server) IsSymbolValid(ctx context.Context, req *pb.Symbol) (*pb.Symbol, error) {
+	s.symbolReqCH <- req
+	res := <- s.symbolResCH
+
+	return &pb.Symbol{
+		Id: res.Id,
+		ExchangeName: res.ExchangeName,
+		Symbol: res.Symbol,
+		Valid: res.Valid,
+	}, nil
 }
 
 func (s *Server) Recv(reqCh chan *pb.AlertReq, errCh chan error, stream pb.CryptoWatch_RequestPriceServer) {
@@ -70,7 +85,7 @@ func (s *Server) Recv(reqCh chan *pb.AlertReq, errCh chan error, stream pb.Crypt
 	}
 
 	if err != nil {
-		s.Logger.WithError(err).Info("Pushed error into 'errCh'.")
+		s.logger.WithError(err).Info("Pushed error into 'errCh'.")
 		errCh <- err
 		return
 	}
@@ -78,9 +93,9 @@ func (s *Server) Recv(reqCh chan *pb.AlertReq, errCh chan error, stream pb.Crypt
 }
 
 func (s *Server) Send(errCh chan error, stream pb.CryptoWatch_RequestPriceServer) {
-	res := <-s.ResCH
+	res := <-s.alertResCh
 	if err := stream.Send(res); err != nil {
-		s.Logger.WithError(err).Info("Pushed error into 'errCh'.")
+		s.logger.WithError(err).Info("Pushed error into 'errCh'.")
 		errCh <- err
 		return
 	}
@@ -89,24 +104,14 @@ func (s *Server) Send(errCh chan error, stream pb.CryptoWatch_RequestPriceServer
 func (s *Server) StartServer(addr string) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
-		s.Logger.Fatalf("failed to listen: %v", err)
+		s.logger.Fatalf("failed to listen: %v", err)
 	}
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterCryptoWatchServer(grpcServer, s)
 
-	s.Logger.Infof("Grpc server listening on %s", addr)
+	s.logger.Infof("Grpc server listening on %s", addr)
 	if err := grpcServer.Serve(lis); err != nil {
-		s.Logger.Fatalf("failed serving server: %v", err)
-	}
-}
-
-func (s *Server) handleConn(fn func(alertReq *pb.AlertReq)) {
-	s.Logger.Info("Server handling conn.")
-	for {
-		select {
-		case req := <-s.ReqCh:
-			fn(req)
-		}
+		s.logger.Fatalf("failed serving server: %v", err)
 	}
 }

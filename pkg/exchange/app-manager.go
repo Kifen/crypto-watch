@@ -3,10 +3,13 @@ package exchange
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os/exec"
 	"strings"
 	"sync"
+
+	"github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 
@@ -25,8 +28,11 @@ type AppManager struct {
 	log       *logging.Logger
 	apps      map[string]AppConfig
 	appsState map[string]struct{}
+	appFn     map[string]func(res *proto.AlertRes)
 	appsPath  string
 	appMu     sync.Mutex
+	once      sync.Once
+	msgCh     chan interface{}
 }
 
 func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, error) {
@@ -38,6 +44,7 @@ func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, erro
 		log:      util.Logger("appmanager-rpc"),
 		apps:     makeApps(exchangeApps),
 		appsPath: path,
+		msgCh:    make(chan interface{}, 100),
 	}, nil
 }
 
@@ -53,7 +60,7 @@ func makeApps(exchangeApps []AppConfig) map[string]AppConfig {
 /*func StartAppServer(r *AppManager, addr string) {
 	rpcS := rpc.NewServer()
 	rpcG := &AppManager{
-		log: util.Logger("appmanager-rpc"),
+		log: util.logger("appmanager-rpc"),
 	}
 
 	if err := rpcS.Register(rpcG); err != nil {
@@ -98,15 +105,25 @@ func (a *AppManager) StartApp(exchangeName string) error {
 	return nil
 }
 
-func (a *AppManager) SendData(exchange string, subData util.ReqData) error {
-	data, err := util.Serialize(subData)
+func (a *AppManager) SendData(exchange string, req interface{}) error {
+	if err := a.appExists(exchange); err != nil {
+		return err
+	}
+
+	if alive := a.appIsAlive(exchange); !alive {
+		if err := a.StartApp(exchange); err != nil {
+			a.log.Warn("Failed to start %s app.", exchange)
+			return err
+		}
+	}
+
+	data, err := util.Serialize(req)
 	if err != nil {
 		a.log.Fatalf("failed to serialize data: %s", err)
 		return err
 	}
 
 	if err := a.sendData(data, a.apps[exchange].SocketFile); err != nil {
-		a.log.Errorf("Failed to send symbol %s to %s server.", subData.Symbol, exchange)
 		return err
 	}
 
@@ -115,8 +132,9 @@ func (a *AppManager) SendData(exchange string, subData util.ReqData) error {
 
 func (a *AppManager) start(dir, name, sockFile string) error {
 	wsUrl := a.apps[name].WsUrl
+	baseUrl := a.apps[name].BaseUrl
 	binaryPath := util.GetBinaryPath(dir, name)
-	cmd := exec.Command(binaryPath, wsUrl, sockFile)
+	cmd := exec.Command(binaryPath, wsUrl, baseUrl, sockFile)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start binance app: %s", err)
@@ -143,6 +161,22 @@ func (a *AppManager) sendData(data []byte, socketFile string) error {
 		return err
 	}
 
+	a.once.Do(func() {
+		for {
+			buf := make([]byte, 1024)
+			n, err := conn.Read(buf)
+			if err != io.EOF {
+				a.log.Errorf("Error on read: %s", err)
+			}
+
+			resData, err := util.Deserialize(buf[:n])
+			if err != nil {
+				a.log.Fatalf("Failed to deserialize response data: %s", err)
+			}
+
+			a.msgCh <- resData
+		}
+	})
 	a.log.Infof("Wrote %d bytes", n)
 	return nil
 }

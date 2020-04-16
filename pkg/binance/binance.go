@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
-	"os"
+	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 
@@ -22,30 +25,26 @@ type Binance struct {
 	sockFile string
 	logger   *logging.Logger
 	wsUrl    string
+	BaseUrl  string
 	ErrCh    chan error
 	wg       sync.WaitGroup
 }
 
-func NewBinance(sockFile, url string) *Binance {
+func NewBinance(sockFile, wsUrl, baseUrl string) *Binance {
 	return &Binance{
 		sockFile: sockFile,
-		wsUrl:    url,
+		wsUrl:    wsUrl,
+		BaseUrl:  baseUrl,
 		logger:   util.Logger("Binance"),
 		ErrCh:    make(chan error),
 	}
 }
 
-func (b *Binance) WsServe(wsUrl string, priceCh chan float64) error {
-	b.logger.Info("Establishing connection to binace ws...")
-	conn, _, err := websocket.DefaultDialer.Dial(wsUrl, nil)
-	if err != nil {
-		return err
-	}
-
+func (b *Binance) handleWsConn(c *websocket.Conn, priceCh chan float32) error {
 	b.logger.Info("Connection established to binance ws...")
 
 	for {
-		msgByte, err := b.WsRead(conn)
+		msgByte, err := b.WsRead(c)
 		if err != nil {
 			return err
 		}
@@ -56,8 +55,10 @@ func (b *Binance) WsServe(wsUrl string, priceCh chan float64) error {
 			return err
 		}
 
-		log.Println("#PRICE SKYBTC: ", j.Get("c"))
-		os.Exit(1)
+		price := j.Get("c").Interface()
+		priceCh <- price.(float32)
+		//log.Println("#PRICE SKYBTC: ", j.Get("c"))
+		//os.Exit(1)
 	}
 }
 
@@ -100,13 +101,22 @@ func (b *Binance) Serve() error {
 			return err
 		}
 
-		go b.handleServerConn(conn)
+		b.handleServerConn(conn)
 	}
 
 	return nil
 }
 
 func (b *Binance) handleServerConn(conn net.Conn) {
+	var write = func(b []byte, logger *logging.Logger) {
+		n, err := conn.Write(b)
+		if err != nil {
+			logger.Fatalf("Failed to write Response to unix client")
+		}
+
+		logger.Infof("Wrote %d bytes to unix client", n)
+	}
+
 	for {
 		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
@@ -120,33 +130,122 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 			b.logger.Fatalf("Failed to deserialize request data: %s", err)
 		}
 
-		b.serve(reqData, conn)
+		switch v := reqData.(type) {
+		case proto.AlertReq:
+			go b.wsServe(&v, write)
+		case proto.Symbol:
+			b.validateSymbol(&v, write)
+		}
 	}
 }
 
-func (b *Binance) serve(data util.ReqData, conn net.Conn) {
-	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(data.Symbol))
-	go func() {
-		priceCh := make(chan float64)
-		b.WsServe(endPoint, priceCh)
-		price := <-priceCh
+func (b *Binance) wsServe(req *proto.AlertReq, write func(b []byte, l *logging.Logger)) {
+	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(req.Req.Symbol))
+	priceCh := make(chan float32)
+	alertPriceCh := make(chan float32)
 
-		b, err := util.Serialize(util.ResData{
-			Symbol: data.Symbol,
-			Id:     data.Id,
-			Price:  price,
-		})
+	b.logger.Info("Establishing connection to binace ws...")
+	c, _, err := websocket.DefaultDialer.Dial(endPoint, nil)
+	if err != nil {
+		b.logger.Fatalf("Failed to create a websocket connection to binance ws: %s", err)
+	}
 
-		if err != nil {
-			log.Fatalf("Failed to serialize response data: %s", err)
+	b.logger.Info("Connection established to binance ws...")
+
+	go b.handleWsConn(c, priceCh)
+	go b.alert(req.Req.Action, req.Req.Price, priceCh, alertPriceCh)
+
+	p := <-alertPriceCh
+	if err := c.Close(); err != nil {
+		b.logger.Fatalf("Failed to close websocket connection: %s", err)
+	}
+
+	res, err := util.Serialize(proto.AlertRes{
+		Req:   req,
+		Price: p,
+	})
+
+	if err != nil {
+		log.Fatalf("Failed to serialize Response req: %s", err)
+	}
+
+	write(res, b.logger)
+}
+
+func (b *Binance) alert(action string, price float32, priceCh, alertPriceCh chan float32) {
+	switch action {
+	case "gt":
+		for {
+			select {
+			case rePrice := <-priceCh:
+				if rePrice > price {
+					alertPriceCh <- rePrice
+					return
+				}
+			}
 		}
-
-		// write price data to client
-		n, err := conn.Write(b)
-		if err != nil {
-			log.Fatalf("Failed to write data to unix client")
+	case "lt":
+		for {
+			select {
+			case rePrice := <-priceCh:
+				if rePrice < price {
+					alertPriceCh <- rePrice
+					return
+				}
+			}
 		}
+	}
+}
 
-		log.Printf("Wrote %d bytes to unix client", n)
-	}()
+func (b *Binance) validateSymbol(s *proto.Symbol, fn func(b []byte, l *logging.Logger)) {
+	var find = func(slice []Symbol, val string) bool {
+		for _, item := range slice {
+			if item.symbol == val {
+				return true
+			}
+		}
+		return false
+	}
+
+	r, err := b.getExchangeSymbols()
+	if err != nil {
+		b.logger.Fatalf("Failed to get exchange symbols: %s", err)
+	}
+
+	isValid := find(r.symbols, s.Symbol)
+	res, err := util.Serialize(proto.Symbol{
+		ExchangeName: s.ExchangeName,
+		Symbol:       s.Symbol,
+		Valid:        isValid,
+	})
+
+	if err != nil {
+		log.Fatalf("Failed to serialize Response req: %s", err)
+	}
+
+	fn(res, b.logger)
+}
+
+func (b *Binance) getExchangeSymbols() (*Response, error) {
+	endpoint := "api/v3/exchangeInfo"
+	url := fmt.Sprintf("%s/%s", b.BaseUrl, endpoint)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get resource: %s", err)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Response body: %s", err)
+	}
+
+	var symbols *Response
+	err = json.Unmarshal(body, &symbols)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshall data: %s", err)
+	}
+
+	b.logger.Infof("Unmarshalled data: %s", symbols)
+
+	return symbols, nil
 }
