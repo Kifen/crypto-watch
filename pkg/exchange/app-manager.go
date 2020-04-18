@@ -3,17 +3,15 @@ package exchange
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
-
-	"github.com/Kifen/crypto-watch/pkg/proto"
-
-	"github.com/SkycoinProject/skycoin/src/util/logging"
+	"time"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
+	"github.com/SkycoinProject/skycoin/src/util/logging"
 )
 
 var (
@@ -28,7 +26,6 @@ type AppManager struct {
 	log       *logging.Logger
 	apps      map[string]AppConfig
 	appsState map[string]struct{}
-	appFn     map[string]func(res *proto.AlertRes)
 	appsPath  string
 	appMu     sync.Mutex
 	once      sync.Once
@@ -41,10 +38,11 @@ func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, erro
 		return nil, fmt.Errorf("Invalid apps path: %s", err)
 	}
 	return &AppManager{
-		log:      util.Logger("appmanager-rpc"),
-		apps:     makeApps(exchangeApps),
-		appsPath: path,
-		msgCh:    make(chan interface{}, 100),
+		log:       util.Logger("appmanager-rpc"),
+		apps:      makeApps(exchangeApps),
+		appsState: map[string]struct{}{},
+		appsPath:  path,
+		msgCh:     make(chan interface{}, 100),
 	}, nil
 }
 
@@ -56,25 +54,6 @@ func makeApps(exchangeApps []AppConfig) map[string]AppConfig {
 
 	return apps
 }
-
-/*func StartAppServer(r *AppManager, addr string) {
-	rpcS := rpc.NewServer()
-	rpcG := &AppManager{
-		log: util.logger("appmanager-rpc"),
-	}
-
-	if err := rpcS.Register(rpcG); err != nil {
-		r.log.Fatalf("failed to register appmanager-rpc server: %s", err)
-	}
-
-	lis, err := net.Listen("tcp", addr)
-	if err != nil {
-		r.log.Fatalf("failed to set appmanager-rpc listener: %s", err)
-	}
-
-	r.log.Info("App-rpc server up...")
-	rpc.Accept(lis)
-}*/
 
 func (a *AppManager) appExists(exchange string) error {
 	if _, ok := a.apps[exchange]; !ok {
@@ -112,9 +91,9 @@ func (a *AppManager) SendData(exchange string, req interface{}) error {
 
 	if alive := a.appIsAlive(exchange); !alive {
 		if err := a.StartApp(exchange); err != nil {
-			a.log.Warn("Failed to start %s app.", exchange)
 			return err
 		}
+		a.log.Infof("Successfully started %s server.", exchange)
 	}
 
 	data, err := util.Serialize(req)
@@ -131,15 +110,27 @@ func (a *AppManager) SendData(exchange string, req interface{}) error {
 }
 
 func (a *AppManager) start(dir, name, sockFile string) error {
+	if err := util.UnlinkSocketFiles(sockFile); err != nil {
+		return fmt.Errorf("failed to remove unix socket file: %s", err)
+	}
+
 	wsUrl := a.apps[name].WsUrl
 	baseUrl := a.apps[name].BaseUrl
 	binaryPath := util.GetBinaryPath(dir, name)
-	cmd := exec.Command(binaryPath, wsUrl, baseUrl, sockFile)
+
+	//cmd := exec.Command(binaryPath, wsUrl, baseUrl, sockFile)
+	cmd := &exec.Cmd{
+		Path:   binaryPath,
+		Args:   []string{binaryPath, wsUrl, baseUrl, sockFile},
+		Stdout: os.Stdout,
+		Stderr: os.Stdout,
+	}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start binance app: %s", err)
 	}
 
+	time.Sleep(5 * time.Second)
 	return nil
 }
 
@@ -156,17 +147,19 @@ func (a *AppManager) sendData(data []byte, socketFile string) error {
 		}
 	}()
 
+	a.log.Info("Writing request to app server.")
 	n, err := conn.Write(data)
 	if err != nil {
 		return err
 	}
+	a.log.Infof("Wrote %d bytes", n)
 
 	a.once.Do(func() {
 		for {
 			buf := make([]byte, 1024)
 			n, err := conn.Read(buf)
-			if err != io.EOF {
-				a.log.Errorf("Error on read: %s", err)
+			if err != nil {
+				a.log.Fatalf("Error on read: %s", err)
 			}
 
 			resData, err := util.Deserialize(buf[:n])
@@ -177,6 +170,5 @@ func (a *AppManager) sendData(data []byte, socketFile string) error {
 			a.msgCh <- resData
 		}
 	})
-	a.log.Infof("Wrote %d bytes", n)
 	return nil
 }

@@ -3,17 +3,14 @@ package binance
 import (
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/Kifen/crypto-watch/pkg/proto"
+	"github.com/SkycoinProject/skycoin/src/util/logging"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
-
-	"github.com/Kifen/crypto-watch/pkg/proto"
-
-	"github.com/SkycoinProject/skycoin/src/util/logging"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 
@@ -83,7 +80,7 @@ func (b *Binance) WsWrite(conn *websocket.Conn, data interface{}) error {
 func (b *Binance) Serve() error {
 	listener, err := net.Listen("unix", b.sockFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to start binance server listener: %v", err)
 	}
 
 	b.logger.Infof("Binance server listening on unix socket: %s", b.sockFile)
@@ -101,6 +98,7 @@ func (b *Binance) Serve() error {
 			return err
 		}
 
+		b.logger.Infof("New connection: %v", conn.LocalAddr())
 		b.handleServerConn(conn)
 	}
 
@@ -120,9 +118,9 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 	for {
 		buf := make([]byte, 1024)
 		n, err := conn.Read(buf)
-		if err != io.EOF {
-			b.logger.Warnf("error on read: %s", err)
-			break
+		if err != nil {
+			b.logger.Warnf("error on read: %v", err)
+			return
 		}
 
 		reqData, err := util.Deserialize(buf[:n])
@@ -132,6 +130,7 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 
 		switch v := reqData.(type) {
 		case proto.AlertReq:
+			b.logger.Info(v)
 			go b.wsServe(&v, write)
 		case proto.Symbol:
 			b.validateSymbol(&v, write)
@@ -198,25 +197,17 @@ func (b *Binance) alert(action string, price float32, priceCh, alertPriceCh chan
 }
 
 func (b *Binance) validateSymbol(s *proto.Symbol, fn func(b []byte, l *logging.Logger)) {
-	var find = func(slice []Symbol, val string) bool {
-		for _, item := range slice {
-			if item.symbol == val {
-				return true
-			}
-		}
-		return false
-	}
-
-	r, err := b.getExchangeSymbols()
+	v, err := b.getSymbolsAndValidate(s.Symbol)
 	if err != nil {
-		b.logger.Fatalf("Failed to get exchange symbols: %s", err)
+		b.logger.Fatalf("Failed to validate symbol: %s", err)
 	}
 
-	isValid := find(r.symbols, s.Symbol)
+	b.logger.Infof("Symbol %s is valid.", s.Symbol)
+
 	res, err := util.Serialize(proto.Symbol{
 		ExchangeName: s.ExchangeName,
 		Symbol:       s.Symbol,
-		Valid:        isValid,
+		Valid:        v,
 	})
 
 	if err != nil {
@@ -226,26 +217,32 @@ func (b *Binance) validateSymbol(s *proto.Symbol, fn func(b []byte, l *logging.L
 	fn(res, b.logger)
 }
 
-func (b *Binance) getExchangeSymbols() (*Response, error) {
+func (b *Binance) getSymbolsAndValidate(symbol string) (bool, error) {
 	endpoint := "api/v3/exchangeInfo"
 	url := fmt.Sprintf("%s/%s", b.BaseUrl, endpoint)
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get resource: %s", err)
+		return false, fmt.Errorf("failed to get resource: %s", err)
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read Response body: %s", err)
+		return false, fmt.Errorf("failed to read Response body: %s", err)
 	}
 
-	var symbols *Response
-	err = json.Unmarshal(body, &symbols)
+	j, err := simplejson.NewJson(body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshall data: %s", err)
+		return false, err
 	}
 
-	b.logger.Infof("Unmarshalled data: %s", symbols)
+	symbolLen := len(j.Get("symbols").MustArray())
+	b.logger.Infof("Validating symbol %s.", symbol)
+	for i := 0; i < symbolLen; i++ {
+		s := j.Get("symbols").GetIndex(i).Get("symbol").Interface()
+		if strings.ToLower(s.(string)) == symbol {
+			return true, nil
+		}
+	}
 
-	return symbols, nil
+	return false, fmt.Errorf("symbol %s is not supported on exchange.", symbol)
 }

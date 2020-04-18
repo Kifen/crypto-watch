@@ -12,6 +12,9 @@ format: ## Formats the code. Must have goimports installed (use make install-lin
 	goimports -w -local github.com/Kifen/crypto-watch ./pkg
 	goimports -w -local github.com/Kifen/crypto-watch ./cmd
 
+install-apps:
+	${OPTS} go install ./cmd/apps/binance
+
 install-linters: ## Install linters
 	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.24.0
 	golangci-lint --version

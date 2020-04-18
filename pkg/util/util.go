@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
@@ -19,6 +20,7 @@ func Logger(moduleName string) *logging.Logger {
 }
 
 var log = Logger("util")
+var once sync.Once
 
 func AppsDir(appsPath string) (string, error) {
 	absPath, err := filepath.Abs(appsPath)
@@ -83,10 +85,20 @@ func UnlinkSocketFiles(socketFiles ...string) error {
 	return nil
 }
 
+func registerTypes() {
+	gob.Register(proto.Symbol{})
+	gob.Register(proto.AlertRes{})
+	gob.Register(proto.AlertReq{})
+}
+
 func Serialize(data interface{}) ([]byte, error) {
+	once.Do(func() {
+		registerTypes()
+	})
+
 	var buff bytes.Buffer
-	decoder := gob.NewEncoder(&buff)
-	err := decoder.Encode(data)
+	enc := gob.NewEncoder(&buff)
+	err := enc.Encode(&data)
 	if err != nil {
 		return nil, err
 	}
@@ -95,11 +107,15 @@ func Serialize(data interface{}) ([]byte, error) {
 }
 
 func Deserialize(data []byte) (interface{}, error) {
+	once.Do(func() {
+		registerTypes()
+	})
+
 	var i interface{}
 	decoder := gob.NewDecoder(bytes.NewReader(data))
 	err := decoder.Decode(&i)
 	if err != nil {
-		return proto.AlertReq{}, err
+		return nil, err
 	}
 
 	return i, nil

@@ -57,6 +57,7 @@ func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) 
 }
 
 func (e *Exchange) ManageServerConn() {
+	e.Logger.Info("Managing connection...")
 	for {
 		select {
 		case req := <-e.Srv.alertReqCh:
@@ -75,7 +76,7 @@ func (e *Exchange) ManageServerConn() {
 }
 
 func (e *Exchange) handlePriceRequest(req *pb.AlertReq) {
-	if err := e.AppManager.SendData(req.ExchangeName, req); err != nil {
+	if err := e.AppManager.SendData(req.ExchangeName, *req); err != nil {
 		e.Logger.Errorf("Failed to send data to %s server: %s", req.ExchangeName, err)
 		e.Srv.alertResCh <- &pb.AlertRes{
 			Req:     req,
@@ -86,7 +87,7 @@ func (e *Exchange) handlePriceRequest(req *pb.AlertReq) {
 }
 
 func (e *Exchange) handleSymbolRequest(req *pb.Symbol) {
-	if err := e.AppManager.SendData(req.ExchangeName, req); err != nil {
+	if err := e.AppManager.SendData(req.ExchangeName, *req); err != nil {
 		e.Logger.Errorf("Failed to send data to %s server: %s", req.ExchangeName, err)
 
 	}

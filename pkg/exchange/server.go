@@ -29,12 +29,14 @@ const bufferSize = 10
 
 func NewServer(callback func(string) bool) *Server {
 	return &Server{
-		fn:         callback,
-		SendErrCh:  make(chan error, bufferSize),
-		RecvErrCh:  make(chan error, bufferSize),
-		alertReqCh: make(chan *pb.AlertReq, bufferSize),
-		alertResCh: make(chan *pb.AlertRes, bufferSize),
-		logger:     util.Logger("Server"),
+		fn:          callback,
+		SendErrCh:   make(chan error, bufferSize),
+		RecvErrCh:   make(chan error, bufferSize),
+		alertReqCh:  make(chan *pb.AlertReq, bufferSize),
+		alertResCh:  make(chan *pb.AlertRes, bufferSize),
+		symbolReqCH: make(chan *pb.Symbol, bufferSize),
+		symbolResCH: make(chan *pb.Symbol, bufferSize),
+		logger:      util.Logger("Server"),
 	}
 }
 
@@ -68,13 +70,13 @@ func (s *Server) IsExchangeSupported(ctx context.Context, exchange *pb.Exchange)
 
 func (s *Server) IsSymbolValid(ctx context.Context, req *pb.Symbol) (*pb.Symbol, error) {
 	s.symbolReqCH <- req
-	res := <- s.symbolResCH
+	res := <-s.symbolResCH
 
 	return &pb.Symbol{
-		Id: res.Id,
+		Id:           res.Id,
 		ExchangeName: res.ExchangeName,
-		Symbol: res.Symbol,
-		Valid: res.Valid,
+		Symbol:       res.Symbol,
+		Valid:        res.Valid,
 	}, nil
 }
 
