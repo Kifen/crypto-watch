@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
-	"github.com/Kifen/crypto-watch/pkg/proto"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 )

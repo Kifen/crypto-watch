@@ -13,6 +13,7 @@ message Symbol {
     string ExchangeName = 2;
     string Symbol = 3;
     bool valid = 4;
+    string message = 5;
 }
 
 message Exchange {

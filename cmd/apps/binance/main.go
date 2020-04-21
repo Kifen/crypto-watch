@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+
 	"github.com/Kifen/crypto-watch/pkg/binance"
 	"github.com/Kifen/crypto-watch/pkg/util"
 )

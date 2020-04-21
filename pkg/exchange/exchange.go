@@ -2,9 +2,10 @@ package exchange
 
 import (
 	"fmt"
-	pb "github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
+
+	pb "github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 )
@@ -89,6 +90,12 @@ func (e *Exchange) handlePriceRequest(req *pb.AlertReq) {
 func (e *Exchange) handleSymbolRequest(req *pb.Symbol) {
 	if err := e.AppManager.SendData(req.ExchangeName, *req); err != nil {
 		e.Logger.Errorf("Failed to send data to %s server: %s", req.ExchangeName, err)
-
+		e.Srv.symbolResCH <- &pb.Symbol{
+			Id:           req.Id,
+			ExchangeName: req.ExchangeName,
+			Symbol:       req.Symbol,
+			Valid:        false,
+			Message:      err.Error(),
+		}
 	}
 }

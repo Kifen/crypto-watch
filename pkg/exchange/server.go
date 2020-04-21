@@ -2,8 +2,6 @@ package exchange
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"net"
 
@@ -25,7 +23,7 @@ type Server struct {
 	logger      *logging.Logger
 }
 
-const bufferSize = 10
+const bufferSize = 100
 
 func NewServer(callback func(string) bool) *Server {
 	return &Server{
@@ -65,7 +63,7 @@ func (s *Server) IsExchangeSupported(ctx context.Context, exchange *pb.Exchange)
 		}, nil
 	}
 
-	return nil, errors.New(fmt.Sprintf("Exchange %s is not supported", exchange.Name))
+	return nil, nil
 }
 
 func (s *Server) IsSymbolValid(ctx context.Context, req *pb.Symbol) (*pb.Symbol, error) {
@@ -77,6 +75,7 @@ func (s *Server) IsSymbolValid(ctx context.Context, req *pb.Symbol) (*pb.Symbol,
 		ExchangeName: res.ExchangeName,
 		Symbol:       res.Symbol,
 		Valid:        res.Valid,
+		Message:      res.Message,
 	}, nil
 }
 

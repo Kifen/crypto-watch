@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Kifen/crypto-watch/pkg/util"
 	"github.com/SkycoinProject/skycoin/src/util/logging"
+
+	"github.com/Kifen/crypto-watch/pkg/util"
 )
 
 var (
@@ -23,13 +24,15 @@ var (
 )
 
 type AppManager struct {
-	log       *logging.Logger
-	apps      map[string]AppConfig
-	appsState map[string]struct{}
-	appsPath  string
-	appMu     sync.Mutex
-	once      sync.Once
-	msgCh     chan interface{}
+	log            *logging.Logger
+	apps           map[string]AppConfig
+	appsState      map[string]struct{}
+	appsClientConn map[string]net.Conn
+	appsMsgCh      map[string]chan interface{}
+	appsPath       string
+	appMu          sync.Mutex
+	once           sync.Once
+	msgCh          chan interface{}
 }
 
 func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, error) {
@@ -37,12 +40,15 @@ func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, erro
 	if err != nil {
 		return nil, fmt.Errorf("Invalid apps path: %s", err)
 	}
+
 	return &AppManager{
-		log:       util.Logger("appmanager-rpc"),
-		apps:      makeApps(exchangeApps),
-		appsState: map[string]struct{}{},
-		appsPath:  path,
-		msgCh:     make(chan interface{}, 100),
+		log:            util.Logger("appmanager-rpc"),
+		apps:           makeApps(exchangeApps),
+		appsState:      make(map[string]struct{}),
+		appsClientConn: make(map[string]net.Conn),
+		appsMsgCh:      map[string]chan interface{}{},
+		appsPath:       path,
+		msgCh:          make(chan interface{}, 100),
 	}, nil
 }
 
@@ -68,7 +74,7 @@ func (a *AppManager) appIsAlive(exchange string) bool {
 	return alive
 }
 
-func (a *AppManager) StartApp(exchangeName string) error {
+func (a *AppManager) startApp(exchangeName string) error {
 	exchange := strings.ToLower(exchangeName)
 	sockFile := a.apps[exchangeName].SocketFile
 
@@ -90,10 +96,17 @@ func (a *AppManager) SendData(exchange string, req interface{}) error {
 	}
 
 	if alive := a.appIsAlive(exchange); !alive {
-		if err := a.StartApp(exchange); err != nil {
+		if err := a.startApp(exchange); err != nil {
 			return err
 		}
 		a.log.Infof("Successfully started %s server.", exchange)
+
+		err := a.createAppClient(exchange, a.apps[exchange].SocketFile)
+		if err != nil {
+			a.log.Fatalf("Failed to create %s app client.", exchange)
+		}
+
+		go a.readData(exchange)
 	}
 
 	data, err := util.Serialize(req)
@@ -102,7 +115,7 @@ func (a *AppManager) SendData(exchange string, req interface{}) error {
 		return err
 	}
 
-	if err := a.sendData(data, a.apps[exchange].SocketFile); err != nil {
+	if err := a.sendData(data, exchange); err != nil {
 		return err
 	}
 
@@ -118,7 +131,6 @@ func (a *AppManager) start(dir, name, sockFile string) error {
 	baseUrl := a.apps[name].BaseUrl
 	binaryPath := util.GetBinaryPath(dir, name)
 
-	//cmd := exec.Command(binaryPath, wsUrl, baseUrl, sockFile)
 	cmd := &exec.Cmd{
 		Path:   binaryPath,
 		Args:   []string{binaryPath, wsUrl, baseUrl, sockFile},
@@ -130,45 +142,50 @@ func (a *AppManager) start(dir, name, sockFile string) error {
 		return fmt.Errorf("failed to start binance app: %s", err)
 	}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 	return nil
 }
 
-func (a *AppManager) sendData(data []byte, socketFile string) error {
-	conn, err := net.Dial("unix", socketFile)
+func (a *AppManager) createAppClient(exchange, sock string) error {
+	conn, err := net.Dial("unix", sock)
 	if err != nil {
 		return err
 	}
 
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			a.log.Errorf("error closing client: %v", err)
-		}
-	}()
+	a.log.Infof("Client created for %s app.", exchange)
+	a.appsClientConn[exchange] = conn
 
+	return nil
+}
+
+func (a *AppManager) sendData(data []byte, exchange string) error {
+	conn := a.appsClientConn[exchange]
 	a.log.Info("Writing request to app server.")
 	n, err := conn.Write(data)
+
 	if err != nil {
 		return err
 	}
+
 	a.log.Infof("Wrote %d bytes", n)
 
-	a.once.Do(func() {
-		for {
-			buf := make([]byte, 1024)
-			n, err := conn.Read(buf)
-			if err != nil {
-				a.log.Fatalf("Error on read: %s", err)
-			}
-
-			resData, err := util.Deserialize(buf[:n])
-			if err != nil {
-				a.log.Fatalf("Failed to deserialize response data: %s", err)
-			}
-
-			a.msgCh <- resData
-		}
-	})
 	return nil
+}
+
+func (a *AppManager) readData(exchange string) error {
+	conn := a.appsClientConn[exchange]
+	for {
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err != nil {
+			a.log.Fatalf("Error on read: %s", err)
+		}
+
+		resData, err := util.Deserialize(buf[:n])
+		if err != nil {
+			a.log.Fatalf("Failed to deserialize response data: %s", err)
+		}
+
+		a.msgCh <- resData
+	}
 }

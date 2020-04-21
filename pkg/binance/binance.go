@@ -3,14 +3,16 @@ package binance
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/Kifen/crypto-watch/pkg/proto"
-	"github.com/SkycoinProject/skycoin/src/util/logging"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/SkycoinProject/skycoin/src/util/logging"
+
+	"github.com/Kifen/crypto-watch/pkg/proto"
 
 	"github.com/Kifen/crypto-watch/pkg/util"
 
@@ -54,8 +56,6 @@ func (b *Binance) handleWsConn(c *websocket.Conn, priceCh chan float32) error {
 
 		price := j.Get("c").Interface()
 		priceCh <- price.(float32)
-		//log.Println("#PRICE SKYBTC: ", j.Get("c"))
-		//os.Exit(1)
 	}
 }
 
@@ -202,9 +202,10 @@ func (b *Binance) validateSymbol(s *proto.Symbol, fn func(b []byte, l *logging.L
 		b.logger.Fatalf("Failed to validate symbol: %s", err)
 	}
 
-	b.logger.Infof("Symbol %s is valid.", s.Symbol)
+	b.logger.Infof("Symbol %s is valid on %s exchange.", s.Symbol, s.ExchangeName)
 
 	res, err := util.Serialize(proto.Symbol{
+		Id:           s.Id,
 		ExchangeName: s.ExchangeName,
 		Symbol:       s.Symbol,
 		Valid:        v,
@@ -237,6 +238,7 @@ func (b *Binance) getSymbolsAndValidate(symbol string) (bool, error) {
 
 	symbolLen := len(j.Get("symbols").MustArray())
 	b.logger.Infof("Validating symbol %s.", symbol)
+
 	for i := 0; i < symbolLen; i++ {
 		s := j.Get("symbols").GetIndex(i).Get("symbol").Interface()
 		if strings.ToLower(s.(string)) == symbol {
