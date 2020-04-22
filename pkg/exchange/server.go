@@ -85,6 +85,7 @@ func (s *Server) Recv(reqCh chan *pb.AlertReq, errCh chan error, stream pb.Crypt
 		errCh <- nil
 	}
 
+	s.logger.Info(req)
 	if err != nil {
 		s.logger.WithError(err).Info("Pushed error into 'errCh'.")
 		errCh <- err

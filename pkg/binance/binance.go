@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -18,6 +19,11 @@ import (
 
 	"github.com/bitly/go-simplejson"
 	"github.com/gorilla/websocket"
+)
+
+const (
+	GT = "gt"
+	LT = "lt"
 )
 
 type Binance struct {
@@ -40,8 +46,6 @@ func NewBinance(sockFile, wsUrl, baseUrl string) *Binance {
 }
 
 func (b *Binance) handleWsConn(c *websocket.Conn, priceCh chan float32) error {
-	b.logger.Info("Connection established to binance ws...")
-
 	for {
 		msgByte, err := b.WsRead(c)
 		if err != nil {
@@ -55,7 +59,13 @@ func (b *Binance) handleWsConn(c *websocket.Conn, priceCh chan float32) error {
 		}
 
 		price := j.Get("c").Interface()
-		priceCh <- price.(float32)
+		b.logger.Info(price)
+		p, err := strconv.ParseFloat(price.(string), 32)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		priceCh <- float32(p)
 	}
 }
 
@@ -152,7 +162,7 @@ func (b *Binance) wsServe(req *proto.AlertReq, write func(b []byte, l *logging.L
 	b.logger.Info("Connection established to binance ws...")
 
 	go b.handleWsConn(c, priceCh)
-	go b.alert(req.Req.Action, req.Req.Price, priceCh, alertPriceCh)
+	go b.alert(strings.ToLower(req.Req.Action), req.Req.Price, priceCh, alertPriceCh, req.ExchangeName, req.Req.Symbol)
 
 	p := <-alertPriceCh
 	if err := c.Close(); err != nil {
@@ -171,24 +181,38 @@ func (b *Binance) wsServe(req *proto.AlertReq, write func(b []byte, l *logging.L
 	write(res, b.logger)
 }
 
-func (b *Binance) alert(action string, price float32, priceCh, alertPriceCh chan float32) {
+func (b *Binance) alert(action string, price float32, priceCh, alertPriceCh chan float32, exchange, symbol string) {
 	switch action {
-	case "gt":
+	case GT:
 		for {
 			select {
 			case rePrice := <-priceCh:
-				if rePrice > price {
-					alertPriceCh <- rePrice
+				from, to := symbol[3:], "USD"
+				p, err := b.calcPrice(from, to, float64(rePrice))
+				if err != nil {
+					return
+				}
+
+				if float32(p) > price {
+					b.logger.Infof("Alert: %s goes over %f on %s. Current price is %f USD", strings.ToUpper(symbol[0:3]), price, exchange, p)
+					alertPriceCh <- float32(p)
 					return
 				}
 			}
 		}
-	case "lt":
+	case LT:
 		for {
 			select {
 			case rePrice := <-priceCh:
-				if rePrice < price {
-					alertPriceCh <- rePrice
+				from, to := symbol[3:], "USD"
+				p, err := b.calcPrice(from, to, float64(rePrice))
+				if err != nil {
+					return
+				}
+
+				if float32(p) < price {
+					b.logger.Infof("Alert: %s goes below %f on %s. Current price is %f USD", strings.ToUpper(symbol[0:3]), price, exchange, p)
+					alertPriceCh <- float32(p)
 					return
 				}
 			}
@@ -247,4 +271,14 @@ func (b *Binance) getSymbolsAndValidate(symbol string) (bool, error) {
 	}
 
 	return false, fmt.Errorf("symbol %s is not supported on exchange.", symbol)
+}
+
+func (b *Binance) calcPrice(from, to string, rePrice float64) (float64, error) {
+	p, err := util.GetCryptoPrice(strings.ToUpper(from), to)
+	if err != nil {
+		return 0, err
+	}
+
+	v := rePrice * (*p)
+	return v, nil
 }

@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/bitly/go-simplejson"
 
 	"github.com/Kifen/crypto-watch/pkg/proto"
 
@@ -22,6 +26,11 @@ func Logger(moduleName string) *logging.Logger {
 
 var log = Logger("util")
 var once sync.Once
+
+const (
+	URL     = "https://min-api.cryptocompare.com/data/price?fsym=%s&tsyms=%s"
+	API_KEY = "5e1d9cde6e4b31856619d3061df490b1c62a4ea71b01da9dec4457e3a2c454ef"
+)
 
 func AppsDir(appsPath string) (string, error) {
 	absPath, err := filepath.Abs(appsPath)
@@ -120,4 +129,37 @@ func Deserialize(data []byte) (interface{}, error) {
 	}
 
 	return i, nil
+}
+
+func GetCryptoPrice(from, to string) (*float64, error) {
+	finalUrl := fmt.Sprintf(URL, from, to)
+	req, err := http.NewRequest("GET", finalUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("authorization", API_KEY)
+	client := http.Client{}
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	j, err := simplejson.NewJson(data)
+	if err != nil {
+		return nil, err
+	}
+
+	p, err := j.Get(strings.ToUpper(to)).Float64()
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
 }
