@@ -2,23 +2,22 @@ package binance
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
+	"github.com/bitly/go-simplejson"
+	"github.com/go-redis/redis"
 
 	"github.com/Kifen/crypto-watch/pkg/proto"
-
+	"github.com/Kifen/crypto-watch/pkg/store"
 	"github.com/Kifen/crypto-watch/pkg/util"
-
-	"github.com/bitly/go-simplejson"
-	"github.com/gorilla/websocket"
 )
 
 const (
@@ -26,196 +25,95 @@ const (
 	LT = "lt"
 )
 
+var (
+	// ErrAlreadyRegistered indicates that request ID is already in use.
+	ErrAlreadyRegistered = errors.New("ID already registered")
+
+	// ErrRequestNotFound indicates that requeste is not registered.
+	ErrRequestNotFound = errors.New("request not found")
+
+	// ErrKeysNotFound indicates that no keys registered.
+	ErrKeysNotFound = errors.New("keys not found")
+)
+
 type Binance struct {
-	sockFile string
-	logger   *logging.Logger
-	wsUrl    string
-	BaseUrl  string
-	ErrCh    chan error
-	wg       sync.WaitGroup
+	sockFile     string
+	logger       *logging.Logger
+	wsUrl        string
+	BaseUrl      string
+	ErrCh        chan error
+	alertPriceCh chan float32
+	wg           sync.WaitGroup
+	gtArr        []float32
+	ltArr        []float32
+	reqChs       map[string]proto.AlertReq
+	redisStore   *store.RedisStore
+	rm           sync.RWMutex
 }
 
-func NewBinance(sockFile, wsUrl, baseUrl string) *Binance {
-	return &Binance{
-		sockFile: sockFile,
-		wsUrl:    wsUrl,
-		BaseUrl:  baseUrl,
-		logger:   util.Logger("Binance"),
-		ErrCh:    make(chan error),
-	}
-}
-
-func (b *Binance) handleWsConn(c *websocket.Conn, priceCh chan float32) error {
-	for {
-		msgByte, err := b.WsRead(c)
-		if err != nil {
-			return err
-		}
-
-		log.Println("Logging data:\n", string(msgByte))
-		j, err := simplejson.NewJson(msgByte)
-		if err != nil {
-			return err
-		}
-
-		price := j.Get("c").Interface()
-		b.logger.Info(price)
-		p, err := strconv.ParseFloat(price.(string), 32)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		priceCh <- float32(p)
-	}
-}
-
-func (b *Binance) WsRead(conn *websocket.Conn) ([]byte, error) {
-	_, p, err := conn.ReadMessage()
+func NewBinance(sockFile, wsUrl, baseUrl, redisUrl, redisPassword string) (*Binance, error) {
+	s, err := store.NewRedisStore(redisUrl, redisPassword)
 	if err != nil {
 		return nil, err
 	}
 
-	return p, nil
+	return &Binance{
+		sockFile:     sockFile,
+		wsUrl:        wsUrl,
+		BaseUrl:      baseUrl,
+		logger:       util.Logger("Binance"),
+		ErrCh:        make(chan error),
+		alertPriceCh: make(chan float32),
+		redisStore:   s,
+		reqChs:       make(map[string]proto.AlertReq),
+	}, nil
 }
 
-func (b *Binance) WsWrite(conn *websocket.Conn, data interface{}) error {
-	msg, err := json.Marshal(data)
-	if err != nil {
-		return err
+func (b *Binance) subscribe(id string, req proto.AlertReq) {
+	b.rm.Lock()
+	if _, ok := b.reqChs[id]; !ok {
+		b.reqChs[id] = req
 	}
-
-	return conn.WriteMessage(websocket.TextMessage, msg)
+	b.rm.Unlock()
 }
 
-func (b *Binance) Serve() error {
-	listener, err := net.Listen("unix", b.sockFile)
-	if err != nil {
-		return fmt.Errorf("failed to start binance server listener: %v", err)
-	}
-
-	b.logger.Infof("Binance server listening on unix socket: %s", b.sockFile)
-
-	defer func() {
-		err := listener.Close()
-		if err != nil {
-			b.logger.WithError(err)
-		}
-	}()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return err
-		}
-
-		b.logger.Infof("New connection: %v", conn.LocalAddr())
-		b.handleServerConn(conn)
-	}
-
-	return nil
+func (b *Binance) unsubscribe(id string) {
+	delete(b.reqChs, id)
 }
 
-func (b *Binance) handleServerConn(conn net.Conn) {
-	var write = func(b []byte, logger *logging.Logger) {
-		n, err := conn.Write(b)
-		if err != nil {
-			logger.Fatalf("Failed to write Response to unix client")
-		}
-
-		logger.Infof("Wrote %d bytes to unix client", n)
+func (b *Binance) publish(price float32) {
+	b.rm.Lock()
+	for _, v := range b.reqChs {
+		go b.check(v.Req.Action, v.Req.Price, price, v.ExchangeName, v.Req.Symbol)
 	}
+	b.rm.Unlock()
+}
 
-	for {
-		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
+func (b *Binance) check(action string, price, rePrice float32, exchange, symbol string) {
+	switch action {
+	case GT:
+		from, to := symbol[3:], "USD"
+		p, err := b.calcPrice(from, to, float64(rePrice))
 		if err != nil {
-			b.logger.Warnf("error on read: %v", err)
 			return
 		}
 
-		reqData, err := util.Deserialize(buf[:n])
-		if err != nil {
-			b.logger.Fatalf("Failed to deserialize request data: %s", err)
-		}
-
-		switch v := reqData.(type) {
-		case proto.AlertReq:
-			b.logger.Info(v)
-			go b.wsServe(&v, write)
-		case proto.Symbol:
-			b.validateSymbol(&v, write)
-		}
-	}
-}
-
-func (b *Binance) wsServe(req *proto.AlertReq, write func(b []byte, l *logging.Logger)) {
-	endPoint := fmt.Sprintf("%s/%s@ticker", b.wsUrl, strings.ToLower(req.Req.Symbol))
-	priceCh := make(chan float32)
-	alertPriceCh := make(chan float32)
-
-	b.logger.Info("Establishing connection to binace ws...")
-	c, _, err := websocket.DefaultDialer.Dial(endPoint, nil)
-	if err != nil {
-		b.logger.Fatalf("Failed to create a websocket connection to binance ws: %s", err)
-	}
-
-	b.logger.Info("Connection established to binance ws...")
-
-	go b.handleWsConn(c, priceCh)
-	go b.alert(strings.ToLower(req.Req.Action), req.Req.Price, priceCh, alertPriceCh, req.ExchangeName, req.Req.Symbol)
-
-	p := <-alertPriceCh
-	if err := c.Close(); err != nil {
-		b.logger.Fatalf("Failed to close websocket connection: %s", err)
-	}
-
-	res, err := util.Serialize(proto.AlertRes{
-		Req:   req,
-		Price: p,
-	})
-
-	if err != nil {
-		log.Fatalf("Failed to serialize Response req: %s", err)
-	}
-
-	write(res, b.logger)
-}
-
-func (b *Binance) alert(action string, price float32, priceCh, alertPriceCh chan float32, exchange, symbol string) {
-	switch action {
-	case GT:
-		for {
-			select {
-			case rePrice := <-priceCh:
-				from, to := symbol[3:], "USD"
-				p, err := b.calcPrice(from, to, float64(rePrice))
-				if err != nil {
-					return
-				}
-
-				if float32(p) > price {
-					b.logger.Infof("Alert: %s goes over %f on %s. Current price is %f USD", strings.ToUpper(symbol[0:3]), price, exchange, p)
-					alertPriceCh <- float32(p)
-					return
-				}
-			}
+		if float32(p) > price {
+			b.logger.Infof("Alert: %s goes over %f on %s. Current price is %f USD", strings.ToUpper(symbol[0:3]), price, exchange, p)
+			b.alertPriceCh <- float32(p)
+			return
 		}
 	case LT:
-		for {
-			select {
-			case rePrice := <-priceCh:
-				from, to := symbol[3:], "USD"
-				p, err := b.calcPrice(from, to, float64(rePrice))
-				if err != nil {
-					return
-				}
+		from, to := symbol[3:], "USD"
+		p, err := b.calcPrice(from, to, float64(rePrice))
+		if err != nil {
+			return
+		}
 
-				if float32(p) < price {
-					b.logger.Infof("Alert: %s goes below %f on %s. Current price is %f USD", strings.ToUpper(symbol[0:3]), price, exchange, p)
-					alertPriceCh <- float32(p)
-					return
-				}
-			}
+		if float32(p) < price {
+			b.logger.Infof("Alert: %s goes below %f on %s. Current price is %f USD", strings.ToUpper(symbol[0:3]), price, exchange, p)
+			b.alertPriceCh <- float32(p)
+			return
 		}
 	}
 }
@@ -236,7 +134,7 @@ func (b *Binance) validateSymbol(s *proto.Symbol, fn func(b []byte, l *logging.L
 	})
 
 	if err != nil {
-		log.Fatalf("Failed to serialize Response req: %s", err)
+		log.Fatalf("Failed to serialize Response ReqData: %s", err)
 	}
 
 	fn(res, b.logger)
@@ -281,4 +179,115 @@ func (b *Binance) calcPrice(from, to string, rePrice float64) (float64, error) {
 
 	v := rePrice * (*p)
 	return v, nil
+}
+
+func (b *Binance) initBinance() ([]float32, []float32, error) {
+	var (
+		tempGt, tempLt []float32
+	)
+
+	gts, err := b.getRequestsById(GT)
+	if err != nil && err != ErrKeysNotFound {
+		return nil, nil, err
+	}
+
+	for _, req := range gts {
+		tempGt = append(tempGt, req.Req.Price)
+	}
+
+	lts, err := b.getRequestsById(LT)
+	if err != nil && err != ErrKeysNotFound {
+		return nil, nil, err
+	}
+
+	for _, req := range lts {
+		tempLt = append(tempLt, req.Req.Price)
+	}
+
+	tempGt = util.QuickSort(tempGt, 0, len(tempGt)-1)
+	tempLt = util.QuickSort(tempLt, 0, len(tempLt)-1)
+
+	return tempGt, tempLt, nil
+}
+
+func (b *Binance) getRequestsById(key string) ([]*proto.AlertReq, error) {
+	reqPrices, err := b.redisStore.Client.SMembers(key).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var keys []string
+
+	for _, reqPrice := range reqPrices {
+		v, err := strconv.ParseFloat(reqPrice, 32)
+		if err != nil {
+			return nil, fmt.Errorf("error converting string to float: %v", err)
+		}
+		keys = append(keys, reqKey(float32(v)))
+	}
+
+	if len(keys) == 0 {
+		return nil, ErrKeysNotFound
+	}
+
+	b.logger.Infof("Got keys from SMembers: %v\n", keys)
+	data, err := b.redisStore.Client.MGet(keys...).Result()
+	if err != nil {
+		return nil, ErrRequestNotFound
+	}
+
+	reqs := make([]*proto.AlertReq, 0)
+	for _, e := range data {
+		var req *proto.AlertReq
+		if err := json.Unmarshal([]byte(e.(string)), &req); err != nil {
+			continue
+		}
+
+		reqs = append(reqs, req)
+	}
+
+	return reqs, nil
+}
+
+func (b *Binance) registerRequest(req *proto.AlertReq) error {
+	var membersKey string
+	if req.Req.Action == "gt" {
+		membersKey = GT
+	} else {
+		membersKey = LT
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	var res *redis.BoolCmd
+	_, err = b.redisStore.Client.TxPipelined(func(pipeliner redis.Pipeliner) error {
+		res = pipeliner.SetNX(reqKey(req.Req.Price), data, 0)
+		pipeliner.SAdd(membersKey, req.Req.Price)
+		return nil
+	})
+
+	if err != nil {
+		return fmt.Errorf("redis: %s", err)
+	}
+
+	if !res.Val() {
+		return ErrAlreadyRegistered
+	}
+
+	return nil
+}
+
+func (b *Binance) deregisterRequest(reqPrice float32) error {
+	if err := b.redisStore.Client.Del(reqKey(reqPrice)).Err(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func reqKey(id float32) string {
+	return fmt.Sprintf("binance_%v", id)
 }

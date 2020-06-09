@@ -1,4 +1,4 @@
-package exchange
+package store
 
 import (
 	"log"
@@ -7,7 +7,7 @@ import (
 )
 
 type RedisStore struct {
-	client *redis.Client
+	Client *redis.Client
 }
 
 func NewRedisStore(addr, password string) (*RedisStore, error) {
@@ -20,7 +20,7 @@ func NewRedisStore(addr, password string) (*RedisStore, error) {
 	client := redis.NewClient(opt)
 	_, err = client.Ping().Result()
 	if err != nil {
-		log.Printf("Error creating redis client.")
+		log.Printf("Error creating redis Client.")
 		return nil, err
 	}
 
@@ -28,8 +28,8 @@ func NewRedisStore(addr, password string) (*RedisStore, error) {
 	return &RedisStore{redis.NewClient(opt)}, nil
 }
 
-func (r *RedisStore) RegisterExchane(exchange string) error {
-	err := r.client.SAdd("exchanges", exchange).Err()
+func (r *RedisStore) RegisterExchange(exchange string) error {
+	err := r.Client.SAdd("exchanges", exchange).Err()
 	if err != nil {
 		return err
 	}

@@ -33,9 +33,11 @@ type AppManager struct {
 	appMu          sync.Mutex
 	once           sync.Once
 	msgCh          chan interface{}
+	redisUrl       string
+	redisPassword  string
 }
 
-func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, error) {
+func NewAppManager(appsPath string, exchangeApps []AppConfig, redisUrl, redisPassword string) (*AppManager, error) {
 	path, err := util.AppsDir(appsPath)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid apps path: %s", err)
@@ -49,6 +51,8 @@ func NewAppManager(appsPath string, exchangeApps []AppConfig) (*AppManager, erro
 		appsMsgCh:      map[string]chan interface{}{},
 		appsPath:       path,
 		msgCh:          make(chan interface{}, 100),
+		redisUrl:       redisUrl,
+		redisPassword:  redisPassword,
 	}, nil
 }
 
@@ -133,7 +137,7 @@ func (a *AppManager) start(dir, name, sockFile string) error {
 
 	cmd := &exec.Cmd{
 		Path:   binaryPath,
-		Args:   []string{binaryPath, wsUrl, baseUrl, sockFile},
+		Args:   []string{binaryPath, wsUrl, baseUrl, sockFile, a.redisUrl, a.redisPassword},
 		Stdout: os.Stdout,
 		Stderr: os.Stdout,
 	}

@@ -3,6 +3,8 @@ package exchange
 import (
 	"fmt"
 
+	"github.com/Kifen/crypto-watch/pkg/store"
+
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 
 	pb "github.com/Kifen/crypto-watch/pkg/proto"
@@ -26,20 +28,20 @@ type Config struct {
 }
 
 type Exchange struct {
-	Store      *RedisStore
+	Store      *store.RedisStore
 	Logger     *logging.Logger
 	Srv        *Server
 	AppManager *AppManager
 }
 
 func NewExchange(redisUrl, password, appsPath string, exchangeApps []AppConfig) (*Exchange, error) {
-	s, err := NewRedisStore(redisUrl, password)
+	s, err := store.NewRedisStore(redisUrl, password)
 	if err != nil {
 		return nil, err
 	}
 
 	// setup the app manager.
-	appManager, err := NewAppManager(appsPath, exchangeApps)
+	appManager, err := NewAppManager(appsPath, exchangeApps, redisUrl, password)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup app manager: %s", err)
 	}

@@ -12,15 +12,22 @@ func main() {
 	flag.Parse()
 
 	if len(flag.Args()) < 3 {
-		log.Fatalf("Invalid number of arguments - found %d, requires [wsUrl] [baseUrl] [sockfile]", len(flag.Args()))
+		log.Fatalf(
+			"Invalid number of arguments - found %d, requires [wsUrl] [baseUrl] [sockfile] [redisUrl] [redisPassword]", len(flag.Args()))
 	}
 
 	wsUrl := flag.Args()[0]
 	baseUrl := flag.Args()[1]
 	sockFile := flag.Args()[2]
-	binance := binance.NewBinance(sockFile, wsUrl, baseUrl)
+	redisUrl := flag.Args()[3]
+	redisPassword := flag.Args()[4]
 
-	err := binance.Serve()
+	binance, err := binance.NewBinance(sockFile, wsUrl, baseUrl, redisUrl, redisPassword)
+	if err != nil {
+		log.Fatalf("Failed to create binance app: %s", err)
+	}
+
+	err = binance.Serve()
 	if err != nil {
 		log.Fatal(err)
 	}

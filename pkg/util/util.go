@@ -163,3 +163,34 @@ func GetCryptoPrice(from, to string) (*float64, error) {
 
 	return &p, nil
 }
+
+// QuickSort sorts an array using the quick sort algorithm
+func QuickSort(arr []float32, left, right int) []float32 {
+	if left < right {
+		pivotPosition := partition(arr, left, right)
+		QuickSort(arr, left, pivotPosition-1)
+		QuickSort(arr, pivotPosition+1, right)
+	}
+
+	return arr
+}
+
+func partition(arr []float32, start, end int) int {
+	swap := func(i, j int) {
+		temp := arr[i]
+		arr[i] = arr[j]
+		arr[j] = temp
+	}
+
+	i, pivot := start-1, arr[end]
+	for counter := start; counter <= end-1; counter++ {
+		if arr[counter] <= pivot {
+			i++
+			swap(i, counter)
+		}
+	}
+
+	newPivot := i + 1
+	swap(newPivot, end)
+	return newPivot
+}
