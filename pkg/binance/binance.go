@@ -264,7 +264,7 @@ func (b *Binance) registerRequest(req *proto.AlertReq) error {
 
 	var res *redis.BoolCmd
 	_, err = b.redisStore.Client.TxPipelined(func(pipeliner redis.Pipeliner) error {
-		res = pipeliner.SetNX(reqKey(req.Req.Price), data, 0)
+		res = pipeliner.SetNX(string(req.Id), data, 0)
 		pipeliner.SAdd(membersKey, req.Req.Price)
 		return nil
 	})
