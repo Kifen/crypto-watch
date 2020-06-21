@@ -13,7 +13,6 @@ import (
 
 	"github.com/SkycoinProject/skycoin/src/util/logging"
 	"github.com/bitly/go-simplejson"
-	"github.com/go-redis/redis"
 
 	"github.com/Kifen/crypto-watch/pkg/proto"
 	"github.com/Kifen/crypto-watch/pkg/store"
@@ -43,10 +42,7 @@ type Binance struct {
 	BaseUrl      string
 	ErrCh        chan error
 	alertPriceCh chan float32
-	wg           sync.WaitGroup
-	gtArr        []float32
-	ltArr        []float32
-	reqChs       map[string]proto.AlertReq
+	reqChs       map[string]*proto.AlertReq
 	redisStore   *store.RedisStore
 	rm           sync.RWMutex
 }
@@ -65,11 +61,11 @@ func NewBinance(sockFile, wsUrl, baseUrl, redisUrl, redisPassword string) (*Bina
 		ErrCh:        make(chan error),
 		alertPriceCh: make(chan float32),
 		redisStore:   s,
-		reqChs:       make(map[string]proto.AlertReq),
+		reqChs:       make(map[string]*proto.AlertReq),
 	}, nil
 }
 
-func (b *Binance) subscribe(id string, req proto.AlertReq) {
+func (b *Binance) subscribe(id string, req *proto.AlertReq) {
 	b.rm.Lock()
 	if _, ok := b.reqChs[id]; !ok {
 		b.reqChs[id] = req
@@ -79,6 +75,14 @@ func (b *Binance) subscribe(id string, req proto.AlertReq) {
 
 func (b *Binance) unsubscribe(id string) {
 	delete(b.reqChs, id)
+	i, err := strconv.Atoi(id)
+	if err != nil {
+		b.logger.Fatal(err)
+	}
+
+	if err := b.deregisterRequest(int32(i)); err != nil {
+		b.logger.Fatalf("failed to deregister request")
+	}
 }
 
 func (b *Binance) publish(price float32) {
@@ -181,113 +185,69 @@ func (b *Binance) calcPrice(from, to string, rePrice float64) (float64, error) {
 	return v, nil
 }
 
-func (b *Binance) initBinance() ([]float32, []float32, error) {
-	var (
-		tempGt, tempLt []float32
-	)
-
-	gts, err := b.getRequestsById(GT)
-	if err != nil && err != ErrKeysNotFound {
-		return nil, nil, err
+func (b *Binance) initReqsSubscriptions() error {
+	err := b.subRequests(GT)
+	if err != nil {
+		return err
 	}
 
-	for _, req := range gts {
-		tempGt = append(tempGt, req.Req.Price)
+	err = b.subRequests(LT)
+	if err != nil {
+		return err
 	}
 
-	lts, err := b.getRequestsById(LT)
-	if err != nil && err != ErrKeysNotFound {
-		return nil, nil, err
-	}
-
-	for _, req := range lts {
-		tempLt = append(tempLt, req.Req.Price)
-	}
-
-	tempGt = util.QuickSort(tempGt, 0, len(tempGt)-1)
-	tempLt = util.QuickSort(tempLt, 0, len(tempLt)-1)
-
-	return tempGt, tempLt, nil
+	b.logger.Infof("Added all requests to subscriptions: %v", b.reqChs)
+	return nil
 }
 
-func (b *Binance) getRequestsById(key string) ([]*proto.AlertReq, error) {
-	reqPrices, err := b.redisStore.Client.SMembers(key).Result()
+func (b *Binance) subRequests(key string) error {
+	var wg sync.WaitGroup
+	reqs, err := b.redisStore.Client.SMembers(key).Result()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	var keys []string
-
-	for _, reqPrice := range reqPrices {
-		v, err := strconv.ParseFloat(reqPrice, 32)
-		if err != nil {
-			return nil, fmt.Errorf("error converting string to float: %v", err)
-		}
-		keys = append(keys, reqKey(float32(v)))
-	}
-
-	if len(keys) == 0 {
-		return nil, ErrKeysNotFound
-	}
-
-	b.logger.Infof("Got keys from SMembers: %v\n", keys)
-	data, err := b.redisStore.Client.MGet(keys...).Result()
-	if err != nil {
-		return nil, ErrRequestNotFound
-	}
-
-	reqs := make([]*proto.AlertReq, 0)
-	for _, e := range data {
+	for _, r := range reqs {
 		var req *proto.AlertReq
-		if err := json.Unmarshal([]byte(e.(string)), &req); err != nil {
-			continue
+		if err := json.Unmarshal([]byte(r), &req); err != nil {
+			b.logger.Fatalf("failed to unmarshall request: %v", err)
 		}
 
-		reqs = append(reqs, req)
+		wg.Add(1)
+		go b.initSubscribe(req, &wg)
 	}
+	wg.Wait()
 
-	return reqs, nil
+	return nil
 }
 
 func (b *Binance) registerRequest(req *proto.AlertReq) error {
-	var membersKey string
-	if req.Req.Action == "gt" {
-		membersKey = GT
-	} else {
-		membersKey = LT
-	}
-
 	data, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
 
-	var res *redis.BoolCmd
-	_, err = b.redisStore.Client.TxPipelined(func(pipeliner redis.Pipeliner) error {
-		res = pipeliner.SetNX(string(req.Id), data, 0)
-		pipeliner.SAdd(membersKey, req.Req.Price)
-		return nil
-	})
-
+	err = b.redisStore.Client.Set(reqKey(req.Id), data, 0).Err()
 	if err != nil {
 		return fmt.Errorf("redis: %s", err)
-	}
-
-	if !res.Val() {
-		return ErrAlreadyRegistered
 	}
 
 	return nil
 }
 
-func (b *Binance) deregisterRequest(reqPrice float32) error {
-	if err := b.redisStore.Client.Del(reqKey(reqPrice)).Err(); err != nil {
+func (b *Binance) deregisterRequest(id int32) error {
+	if err := b.redisStore.Client.Del(reqKey(id)).Err(); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func reqKey(id float32) string {
+func reqKey(id int32) string {
 	return fmt.Sprintf("binance_%v", id)
+}
+
+func (b *Binance) initSubscribe(r *proto.AlertReq, wg *sync.WaitGroup) {
+	defer wg.Done()
+	b.subscribe(string(r.Id), r)
 }

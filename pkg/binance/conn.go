@@ -57,13 +57,10 @@ func (b *Binance) WsWrite(conn *websocket.Conn, data interface{}) error {
 }
 
 func (b *Binance) Serve() error {
-	gt, lt, err := b.initBinance()
+	err := b.initReqsSubscriptions()
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	b.gtArr = gt
-	b.ltArr = lt
 
 	listener, err := net.Listen("unix", b.sockFile)
 	if err != nil {
@@ -123,7 +120,7 @@ func (b *Binance) handleServerConn(conn net.Conn) {
 				b.logger.Fatalf("Failed to register request: %v", err)
 			}
 
-			b.subscribe(strconv.Itoa(int(v.Id)), v)
+			b.subscribe(strconv.Itoa(int(v.Id)), &v)
 
 			b.logger.Infof("Request %d registered.", v.Id)
 			go b.wsServe(&v, write)
@@ -167,5 +164,5 @@ func (b *Binance) wsServe(req *proto.AlertReq, write func(b []byte, l *logging.L
 	write(res, b.logger)
 	id := strconv.Itoa(int(req.Id))
 	b.unsubscribe(id)
-	b.logger.Infof("Unsubscribed id %s", id)
+	b.logger.Infof("Unsubscribed request with id %s", id)
 }
